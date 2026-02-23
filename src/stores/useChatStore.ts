@@ -5,9 +5,10 @@ export interface ChatMessage {
     sender: string;
     content: string;
     timestamp: number;
+    encrypted?: boolean;
 }
 
-export type RoomType = "public" | "private";
+export type RoomType = "1:1" | "group";
 
 export interface Room {
     name: string;

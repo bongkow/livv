@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { BrowserProvider } from "ethers";
 import { APP_NAME, appConfig } from "@/config/appConfig";
+import { isTokenExpired } from "@/utils/isTokenExpired";
 
 interface AuthState {
     walletAddress: string;
@@ -15,6 +16,8 @@ interface AuthActions {
     connectAndSignIn: () => Promise<void>;
     signOut: () => void;
     setErrorMessage: (message: string) => void;
+    /** Returns true if token is valid, false if expired/missing (clears state) */
+    validateToken: () => boolean;
 }
 
 type AuthStore = AuthState & AuthActions;
@@ -47,7 +50,7 @@ export const useAuthStore = create<AuthStore>()(
                     const address = accounts[0];
 
                     // Create message to sign
-                    const message = appConfig.getSignMessage();
+                    const message = appConfig.getSignMessage(address);
                     const provider = new BrowserProvider(ethereum as never);
                     const signer = await provider.getSigner();
                     const signature = await signer.signMessage(message);
@@ -97,6 +100,24 @@ export const useAuthStore = create<AuthStore>()(
                     isAuthenticating: false,
                     errorMessage: "",
                 });
+            },
+
+            validateToken: () => {
+                const { jwt, isConnected } = get();
+                if (!isConnected || !jwt) return false;
+
+                if (isTokenExpired(jwt)) {
+                    set({
+                        walletAddress: "",
+                        jwt: "",
+                        isConnected: false,
+                        isAuthenticating: false,
+                        errorMessage: "Session expired. Please sign in again.",
+                    });
+                    return false;
+                }
+
+                return true;
             },
         }),
         {

@@ -6,9 +6,9 @@ export const appConfig = {
   authApiBaseUrl: "https://api.bongkow.com",
   authEndpoint: "/public/auth/get-token",
   tokenExpirationHour: 24,
-  getSignMessage: () => {
+  getSignMessage: (address: string) => {
     const localTime = new Date().toLocaleString();
-    return `I want to sign in with ${APP_NAME} at ${localTime}`;
+    return `${address} wants to sign in with ${APP_NAME} at ${localTime}`;
   },
   localStorageKeys: {
     auth: `${APP_NAME}-auth`,

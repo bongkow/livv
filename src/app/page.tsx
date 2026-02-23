@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import ConnectWalletButton from "@/components/ConnectWalletButton";
 import RoomGrid from "@/components/RoomGrid";
 import { useAuthStore } from "@/stores/useAuthStore";
@@ -7,10 +8,18 @@ import { useRouter } from "next/navigation";
 
 export default function LandingPage() {
   const isConnected = useAuthStore((s) => s.isConnected);
+  const validateToken = useAuthStore((s) => s.validateToken);
   const router = useRouter();
 
-  const handleEnterRoom = (roomName: string) => {
-    router.push(`/chat?room=${encodeURIComponent(roomName)}`);
+  // Validate JWT on page load — clears expired tokens
+  useEffect(() => {
+    if (isConnected) {
+      validateToken();
+    }
+  }, [isConnected, validateToken]);
+
+  const handleEnterRoom = (roomName: string, roomType: string) => {
+    router.push(`/chat?room=${encodeURIComponent(roomName)}&type=${encodeURIComponent(roomType)}`);
   };
 
   return (
