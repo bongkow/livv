@@ -49,7 +49,7 @@ export function useEncryptionSetup(
             return;
         }
 
-        sendWsMessage("sendmessage", {
+        sendWsMessage("broadcastToChannel", {
             type: "encryption_pubkey",
             publicKey: encryptionKeyPair.publicKey,
             sender: walletAddress,
@@ -69,7 +69,7 @@ export function useEncryptionSetup(
         if (roomEncryptionMode === "group") {
             const { encryptedKeys } = await initializeGroupSenderKey(walletAddress);
             for (const encryptedKey of encryptedKeys) {
-                sendWsMessage("sendmessage", {
+                sendWsMessage("broadcastToChannel", {
                     type: "sender_key",
                     ...encryptedKey,
                     sender: walletAddress,
@@ -80,7 +80,7 @@ export function useEncryptionSetup(
         if (roomEncryptionMode === "direct") {
             const initMessage = await initiateDirectSession(walletAddress);
             if (initMessage) {
-                sendWsMessage("sendmessage", {
+                sendWsMessage("broadcastToChannel", {
                     type: "x3dh_init",
                     ...initMessage,
                     sender: walletAddress,

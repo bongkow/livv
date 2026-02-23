@@ -155,7 +155,7 @@ async function handleIncomingMessage(data: Record<string, unknown>) {
             );
             if (response) {
                 const wsStore = useWebSocketStore.getState();
-                wsStore.sendMessage("sendmessage", {
+                wsStore.sendMessage("broadcastToChannel", {
                     type: "x3dh_response",
                     ...response,
                 });

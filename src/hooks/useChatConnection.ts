@@ -99,7 +99,7 @@ export function useChatConnection(roomName: string, roomType: RoomType = "1:1") 
             if (isEncryptionReady) {
                 const encrypted = await encryptOutgoing(text, walletAddress);
                 if (encrypted) {
-                    sendWsMessage("sendmessage", {
+                    sendWsMessage("broadcastToChannel", {
                         ...encrypted,
                         sender: walletAddress,
                         type: "chat",
@@ -109,7 +109,7 @@ export function useChatConnection(roomName: string, roomType: RoomType = "1:1") 
             }
 
             // Plaintext fallback (encryption not ready)
-            sendWsMessage("sendmessage", {
+            sendWsMessage("broadcastToChannel", {
                 message: text,
                 sender: walletAddress,
                 type: "chat",

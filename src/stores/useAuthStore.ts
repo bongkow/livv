@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { BrowserProvider } from "ethers";
 import { APP_NAME, appConfig } from "@/config/appConfig";
-import { isTokenExpired } from "@/utils/isTokenExpired";
+import { isTokenExpired, getTokenAddress } from "@/utils/isTokenExpired";
 
 interface AuthState {
     walletAddress: string;
@@ -16,8 +16,8 @@ interface AuthActions {
     connectAndSignIn: () => Promise<void>;
     signOut: () => void;
     setErrorMessage: (message: string) => void;
-    /** Returns true if token is valid, false if expired/missing (clears state) */
-    validateToken: () => boolean;
+    /** Validates wallet connection + token address match. Signs out if invalid. */
+    validateSession: () => Promise<boolean>;
 }
 
 type AuthStore = AuthState & AuthActions;
@@ -102,18 +102,55 @@ export const useAuthStore = create<AuthStore>()(
                 });
             },
 
-            validateToken: () => {
-                const { jwt, isConnected } = get();
+            validateSession: async () => {
+                const { jwt, isConnected, signOut } = get();
                 if (!isConnected || !jwt) return false;
 
+                // 1. Check token expiry
                 if (isTokenExpired(jwt)) {
-                    set({
-                        walletAddress: "",
-                        jwt: "",
-                        isConnected: false,
-                        isAuthenticating: false,
-                        errorMessage: "Session expired. Please sign in again.",
-                    });
+                    signOut();
+                    set({ errorMessage: "Session expired. Please sign in again." });
+                    return false;
+                }
+
+                // 2. Check if wallet is still connected in MetaMask
+                const ethereum = (
+                    window as unknown as {
+                        ethereum?: {
+                            request: (args: { method: string }) => Promise<unknown>;
+                        };
+                    }
+                ).ethereum;
+
+                if (!ethereum) {
+                    signOut();
+                    set({ errorMessage: "Wallet not available. Please sign in again." });
+                    return false;
+                }
+
+                try {
+                    const accounts = (await ethereum.request({
+                        method: "eth_accounts",
+                    })) as string[];
+
+                    if (!accounts.length) {
+                        signOut();
+                        set({ errorMessage: "Wallet disconnected. Please sign in again." });
+                        return false;
+                    }
+
+                    // 3. Check if JWT address matches connected wallet
+                    const tokenAddress = getTokenAddress(jwt);
+                    const connectedAddress = accounts[0].toLowerCase();
+
+                    if (!tokenAddress || tokenAddress !== connectedAddress) {
+                        signOut();
+                        set({ errorMessage: "Wallet address changed. Please sign in again." });
+                        return false;
+                    }
+                } catch {
+                    signOut();
+                    set({ errorMessage: "Failed to verify wallet. Please sign in again." });
                     return false;
                 }
 

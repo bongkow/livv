@@ -8,15 +8,15 @@ import { useRouter } from "next/navigation";
 
 export default function LandingPage() {
   const isConnected = useAuthStore((s) => s.isConnected);
-  const validateToken = useAuthStore((s) => s.validateToken);
+  const validateSession = useAuthStore((s) => s.validateSession);
   const router = useRouter();
 
-  // Validate JWT on page load — clears expired tokens
+  // Validate wallet connection + token on page load
   useEffect(() => {
     if (isConnected) {
-      validateToken();
+      validateSession();
     }
-  }, [isConnected, validateToken]);
+  }, [isConnected, validateSession]);
 
   const handleEnterRoom = (roomName: string, roomType: string) => {
     router.push(`/chat?room=${encodeURIComponent(roomName)}&type=${encodeURIComponent(roomType)}`);

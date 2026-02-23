@@ -34,7 +34,7 @@ export function isTokenExpired(token: string): boolean {
 /**
  * Decode the payload section of a JWT (base64url → JSON).
  */
-function decodeJwtPayload(token: string): JwtPayload {
+export function decodeJwtPayload(token: string): JwtPayload {
     const parts = token.split(".");
     if (parts.length !== 3) {
         throw new Error("Invalid JWT format");
@@ -50,4 +50,17 @@ function decodeJwtPayload(token: string): JwtPayload {
     );
 
     return JSON.parse(jsonPayload);
+}
+
+/**
+ * Extract the wallet address embedded in a JWT token.
+ * Returns null if the token is malformed or has no address claim.
+ */
+export function getTokenAddress(token: string): string | null {
+    try {
+        const payload = decodeJwtPayload(token);
+        return payload.address?.toLowerCase() ?? null;
+    } catch {
+        return null;
+    }
 }

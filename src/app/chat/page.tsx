@@ -11,20 +11,23 @@ const DEFAULT_ROOM = "general";
 
 function ChatPageContent() {
     const isConnected = useAuthStore((s) => s.isConnected);
-    const validateToken = useAuthStore((s) => s.validateToken);
+    const validateSession = useAuthStore((s) => s.validateSession);
     const router = useRouter();
     const searchParams = useSearchParams();
     const roomName = searchParams.get("room") || DEFAULT_ROOM;
     const roomType = (searchParams.get("type") || "1:1") as RoomType;
 
-    // Validate JWT before entering room — redirects if expired
+    // Validate wallet connection + token before entering room
     useEffect(() => {
-        if (isConnected && !validateToken()) {
-            router.push("/");
-            return;
-        }
-        if (!isConnected) router.push("/");
-    }, [isConnected, validateToken, router]);
+        const check = async () => {
+            if (isConnected && !(await validateSession())) {
+                router.push("/");
+                return;
+            }
+            if (!isConnected) router.push("/");
+        };
+        check();
+    }, [isConnected, validateSession, router]);
 
     if (!isConnected) return null;
 
