@@ -1,12 +1,10 @@
-"use client";
-
 import { useEffect, useCallback } from "react";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useWebSocketStore } from "@/stores/useWebSocketStore";
 import { useChatStore } from "@/stores/useChatStore";
 import type { RoomType } from "@/stores/useChatStore";
 import { appConfig } from "@/config/appConfig";
-import { fetchRoomByName } from "@/app/actions/fetchRoom";
+import { fetchRoomByName } from "@/api/rooms";
 
 export function useChatConnection(roomName: string, roomType: RoomType = "public") {
     const jwt = useAuthStore((s) => s.jwt);

@@ -1,6 +1,4 @@
-"use client";
-
-import type { RoomData } from "@/app/actions/fetchRoom";
+import type { RoomData } from "@/api/rooms";
 import { truncateAddress } from "@/utils/truncateAddress";
 
 interface RoomCardProps {

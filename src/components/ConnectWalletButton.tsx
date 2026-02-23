@@ -1,5 +1,3 @@
-"use client";
-
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useWebSocketStore } from "@/stores/useWebSocketStore";
 import { truncateAddress } from "@/utils/truncateAddress";

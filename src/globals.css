@@ -3,7 +3,7 @@
 @theme inline {
   --color-background: #000000;
   --color-foreground: #ffffff;
-  --font-sans: var(--font-inter);
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
 *::-webkit-scrollbar {

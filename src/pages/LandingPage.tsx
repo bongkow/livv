@@ -1,16 +1,14 @@
-"use client";
-
 import ConnectWalletButton from "@/components/ConnectWalletButton";
 import RoomGrid from "@/components/RoomGrid";
 import { useAuthStore } from "@/stores/useAuthStore";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
 
 export default function LandingPage() {
   const isConnected = useAuthStore((s) => s.isConnected);
-  const router = useRouter();
+  const navigate = useNavigate();
 
   const handleEnterRoom = (roomName: string) => {
-    router.push(`/chat?room=${encodeURIComponent(roomName)}`);
+    navigate(`/chat?room=${encodeURIComponent(roomName)}`);
   };
 
   return (

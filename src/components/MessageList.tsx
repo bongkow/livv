@@ -1,5 +1,3 @@
-"use client";
-
 import { useRef, useEffect } from "react";
 import { useChatStore, type ChatMessage } from "@/stores/useChatStore";
 import { useAuthStore } from "@/stores/useAuthStore";

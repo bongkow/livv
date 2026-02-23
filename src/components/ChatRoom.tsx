@@ -1,5 +1,3 @@
-"use client";
-
 import MessageList from "./MessageList";
 import MessageInput from "./MessageInput";
 import OnlineUsers from "./OnlineUsers";

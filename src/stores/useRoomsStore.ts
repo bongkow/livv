@@ -1,6 +1,6 @@
 import { create } from "zustand";
-import { fetchAllRooms } from "@/app/actions/fetchRoom";
-import type { RoomData } from "@/app/actions/fetchRoom";
+import { fetchAllRooms } from "@/api/rooms";
+import type { RoomData } from "@/api/rooms";
 
 interface RoomsState {
     rooms: RoomData[];

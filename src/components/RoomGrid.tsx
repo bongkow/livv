@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect } from "react";
 import { useRoomsStore } from "@/stores/useRoomsStore";
 import RoomCard from "./RoomCard";

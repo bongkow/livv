@@ -1,5 +1,3 @@
-"use client";
-
 import { useChatStore } from "@/stores/useChatStore";
 import { truncateAddress } from "@/utils/truncateAddress";
 
