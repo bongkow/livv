@@ -18,13 +18,16 @@ export default function ChatRoom({ roomName, roomType = "1:1" }: ChatRoomProps) 
         useChatConnection(roomName, roomType);
     const currentRoom = useChatStore((s) => s.currentRoom);
 
-    // Gate: show signing prompt until keys are derived
-    if (encryptionStatus === "idle" || encryptionStatus === "deriving") {
-        return <SigningGate status={encryptionStatus} roomName={roomName} />;
-    }
-
-    if (encryptionStatus === "error") {
-        return <SigningGate status="error" roomName={roomName} />;
+    // Gate: show preparation screen until everything is ready
+    if (encryptionStatus === "idle" || encryptionStatus === "deriving" || encryptionStatus === "error") {
+        return (
+            <PreparationGate
+                roomName={roomName}
+                connectionStatus={connectionStatus}
+                encryptionStatus={encryptionStatus}
+                hasRoom={!!currentRoom}
+            />
+        );
     }
 
     const isInputDisabled = connectionStatus !== "connected" || !isEncryptionReady;
@@ -66,45 +69,78 @@ export default function ChatRoom({ roomName, roomType = "1:1" }: ChatRoomProps) 
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
 
-function SigningGate({
-    status,
+function PreparationGate({
     roomName,
+    connectionStatus,
+    encryptionStatus,
+    hasRoom,
 }: {
-    status: "idle" | "deriving" | "error";
     roomName: string;
+    connectionStatus: "disconnected" | "connecting" | "connected";
+    encryptionStatus: "idle" | "deriving" | "handshaking" | "ready" | "error";
+    hasRoom: boolean;
 }) {
+    const steps = [
+        { label: "Fetching room", done: hasRoom },
+        { label: "Deriving encryption keys", done: encryptionStatus !== "idle" && encryptionStatus !== "deriving" },
+        { label: "Connecting to server", done: connectionStatus === "connected" },
+        { label: "Key exchange", done: encryptionStatus === "ready" },
+    ];
+
+    // Find the currently active step (first not-done)
+    const activeIndex = steps.findIndex((s) => !s.done);
+
     return (
         <div className="flex h-full items-center justify-center">
-            <div className="flex flex-col items-center gap-4 text-center max-w-sm">
+            <div className="flex flex-col items-center gap-6 text-center max-w-sm">
                 <span className="text-2xl">
-                    {status === "error" ? "🔓" : "🔐"}
+                    {encryptionStatus === "error" ? "🔓" : "🔐"}
                 </span>
                 <h2 className="text-sm font-medium text-white/70">
                     # {roomName}
                 </h2>
-                {status === "idle" && (
-                    <p className="text-xs text-white/30">
-                        Preparing encryption…
-                    </p>
-                )}
-                {status === "deriving" && (
-                    <>
-                        <p className="text-xs text-white/40">
-                            Sign the message in your wallet to generate encryption keys for this room.
-                        </p>
-                        <p className="text-[11px] text-white/20 animate-pulse">
-                            Waiting for wallet signature…
-                        </p>
-                    </>
-                )}
-                {status === "error" && (
+
+                {encryptionStatus === "error" ? (
                     <p className="text-xs text-red-400/60">
                         Encryption setup failed. Please refresh and try again.
+                    </p>
+                ) : (
+                    <div className="flex flex-col gap-2 w-full">
+                        {steps.map((step, i) => (
+                            <div key={step.label} className="flex items-center gap-2.5">
+                                <StepIndicator done={step.done} active={i === activeIndex} />
+                                <span className={`text-xs ${step.done
+                                        ? "text-white/50"
+                                        : i === activeIndex
+                                            ? "text-white/70 animate-pulse"
+                                            : "text-white/20"
+                                    }`}>
+                                    {step.label}
+                                    {i === activeIndex && "…"}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {encryptionStatus === "deriving" && (
+                    <p className="text-[11px] text-white/25 mt-1">
+                        Sign the message in your wallet
                     </p>
                 )}
             </div>
         </div>
     );
+}
+
+function StepIndicator({ done, active }: { done: boolean; active: boolean }) {
+    if (done) {
+        return <span className="text-[10px] text-white/50 w-3 text-center">✓</span>;
+    }
+    if (active) {
+        return <span className="w-3 h-3 border border-white/40 rounded-full animate-spin border-t-transparent" />;
+    }
+    return <span className="w-1.5 h-1.5 rounded-full bg-white/15 ml-[3px]" />;
 }
 
 function StatusDot({ status }: { status: "disconnected" | "connecting" | "connected" }) {

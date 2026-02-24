@@ -56,7 +56,7 @@ export function useChatConnection(roomName: string, roomType: RoomType = "1:1") 
                 return;
             }
 
-            const channel = `${appConfig.appName}/${roomData.channelHash}`;
+            const channel = `${appConfig.appName}/${roomData.roomName}`;
             setCurrentRoom({ name: roomData.roomName, type: roomType, channel });
         }
 
@@ -97,20 +97,24 @@ export function useChatConnection(roomName: string, roomType: RoomType = "1:1") 
             });
 
             if (isEncryptionReady) {
-                const encrypted = await encryptOutgoing(text, walletAddress);
-                if (encrypted) {
-                    sendWsMessage("broadcastToChannel", {
-                        ...encrypted,
-                        sender: walletAddress,
-                        type: "chat",
-                    });
-                    return;
+                try {
+                    const encrypted = await encryptOutgoing(text, walletAddress);
+                    if (encrypted) {
+                        sendWsMessage("broadcastToChannel", {
+                            ...encrypted,
+                            sender: walletAddress,
+                            type: "chat",
+                        });
+                        return;
+                    }
+                } catch (err) {
+                    console.warn("[encryption] encrypt failed, falling back to plaintext:", err);
                 }
             }
 
             // Plaintext fallback (encryption not ready)
             sendWsMessage("broadcastToChannel", {
-                message: text,
+                text,
                 sender: walletAddress,
                 type: "chat",
             });

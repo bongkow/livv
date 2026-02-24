@@ -94,12 +94,20 @@ export const useWebSocketStore = create<WebSocketStore>()((set, get) => ({
     },
 }));
 
-async function handleIncomingMessage(data: Record<string, unknown>) {
+async function handleIncomingMessage(raw: Record<string, unknown>) {
     const chatStore = useChatStore.getState();
     const encryptionStore = useEncryptionStore.getState();
 
-    // Handle different message types from the WebSocket API
-    console.log("[WS incoming]", JSON.stringify(data));
+    console.log("[WS incoming]", JSON.stringify(raw));
+
+    // The server wraps broadcasts in an envelope:
+    // { action: "message", from, channel, data: { ...payload }, timestamp }
+    // Unwrap the nested payload so the switch operates on the actual message.
+    const data: Record<string, unknown> =
+        raw.action === "message" && raw.data && typeof raw.data === "object"
+            ? { sender: raw.from, timestamp: raw.timestamp, ...(raw.data as Record<string, unknown>) }
+            : raw;
+
     switch (data.type) {
         case "chat": {
             // Skip messages from self — they're already added locally
@@ -112,25 +120,30 @@ async function handleIncomingMessage(data: Record<string, unknown>) {
 
             // If message has ciphertext, try to decrypt
             if (data.ciphertext) {
-                const plaintext = await encryptionStore.decryptIncoming(data);
-                if (plaintext) {
-                    chatStore.addMessage({
-                        id: (data.id as string) || crypto.randomUUID(),
-                        sender: senderAddress,
-                        content: plaintext,
-                        timestamp: (data.timestamp as number) || Date.now(),
-                        encrypted: true,
-                    });
+                try {
+                    const plaintext = await encryptionStore.decryptIncoming(data);
+                    if (plaintext) {
+                        chatStore.addMessage({
+                            id: (data.id as string) || crypto.randomUUID(),
+                            sender: senderAddress,
+                            content: plaintext,
+                            timestamp: (data.timestamp as number) || Date.now(),
+                            encrypted: true,
+                        });
+                        break;
+                    }
+                } catch (err) {
+                    console.warn("[decryption] failed, showing as plaintext fallback:", err);
                 }
-            } else {
-                // Plaintext fallback
-                chatStore.addMessage({
-                    id: (data.id as string) || crypto.randomUUID(),
-                    sender: data.sender as string,
-                    content: (data.message as string) || (data.content as string),
-                    timestamp: (data.timestamp as number) || Date.now(),
-                });
             }
+
+            // Plaintext fallback
+            chatStore.addMessage({
+                id: (data.id as string) || crypto.randomUUID(),
+                sender: data.sender as string,
+                content: (data.text as string) || (data.message as string) || (data.content as string) || "[encrypted message]",
+                timestamp: (data.timestamp as number) || Date.now(),
+            });
             break;
         }
 
@@ -183,11 +196,11 @@ async function handleIncomingMessage(data: Record<string, unknown>) {
 
         default:
             // If no type, treat as a chat message if it has content
-            if (data.message || data.content) {
+            if (data.text || data.message || data.content) {
                 chatStore.addMessage({
                     id: (data.id as string) || crypto.randomUUID(),
                     sender: (data.sender as string) || "unknown",
-                    content: (data.message as string) || (data.content as string) || "",
+                    content: (data.text as string) || (data.message as string) || (data.content as string) || "",
                     timestamp: (data.timestamp as number) || Date.now(),
                 });
             }

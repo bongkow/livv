@@ -39,7 +39,7 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
                     onKeyDown={handleKeyDown}
                     disabled={disabled}
                     placeholder={disabled ? "Connecting..." : "Message..."}
-                    className="flex-1 bg-transparent border-b border-white/[0.1] py-2 text-sm text-white placeholder-white/20 outline-none focus:border-white/30 transition-colors disabled:opacity-30"
+                    className="flex-1 bg-transparent border border-white py-2 px-3 text-sm text-white placeholder-white/40 outline-none focus:border-white transition-colors disabled:opacity-30 rounded"
                 />
                 <button
                     onClick={handleSend}
