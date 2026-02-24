@@ -18,8 +18,8 @@ export default function LandingPage() {
     }
   }, [isConnected, validateSession]);
 
-  const handleEnterRoom = (roomName: string, roomType: string) => {
-    router.push(`/chat?room=${encodeURIComponent(roomName)}&type=${encodeURIComponent(roomType)}`);
+  const handleEnterRoom = (roomName: string) => {
+    router.push(`/chat?room=${encodeURIComponent(roomName)}`);
   };
 
   return (

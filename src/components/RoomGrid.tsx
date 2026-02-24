@@ -6,7 +6,7 @@ import RoomCard from "./RoomCard";
 
 interface RoomGridProps {
     isSignedIn: boolean;
-    onEnterRoom: (roomName: string, roomType: string) => void;
+    onEnterRoom: (roomName: string) => void;
 }
 
 export default function RoomGrid({ isSignedIn, onEnterRoom }: RoomGridProps) {

@@ -3,13 +3,14 @@
 import { useEffect, useCallback } from "react";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useWebSocketStore } from "@/stores/useWebSocketStore";
-import { useChatStore } from "@/stores/useChatStore";
+import { useChatStore, deriveRoomType } from "@/stores/useChatStore";
 import type { RoomType } from "@/stores/useChatStore";
 import { appConfig } from "@/config/appConfig";
 import { fetchRoomByName } from "@/app/actions/fetchRoom";
 import { useEncryptionSetup } from "./useEncryptionSetup";
 import { useEncryptionStore } from "@/stores/useEncryptionStore";
 import type { RoomEncryptionMode } from "@/stores/useEncryptionStore";
+import { usePresence } from "./usePresence";
 
 /**
  * Map room type to encryption mode:
@@ -20,7 +21,7 @@ function toEncryptionMode(roomType: RoomType): RoomEncryptionMode {
     return roomType === "group" ? "group" : "direct";
 }
 
-export function useChatConnection(roomName: string, roomType: RoomType = "1:1") {
+export function useChatConnection(roomName: string) {
     const jwt = useAuthStore((s) => s.jwt);
     const isConnected = useAuthStore((s) => s.isConnected);
     const walletAddress = useAuthStore((s) => s.walletAddress);
@@ -34,12 +35,21 @@ export function useChatConnection(roomName: string, roomType: RoomType = "1:1") 
     const currentRoom = useChatStore((s) => s.currentRoom);
     const channelHash = currentRoom?.channel?.split("/").pop() ?? null;
 
+    const isRoomFull = useChatStore((s) => {
+        const room = s.currentRoom;
+        return room ? s.onlineUsers.length > room.maxPeersPerRoom : false;
+    });
+
+    const roomType = deriveRoomType(currentRoom?.maxPeersPerRoom ?? 2);
     const encryptionMode = toEncryptionMode(roomType);
     const { encryptionStatus, isEncryptionReady } = useEncryptionSetup(channelHash, encryptionMode);
     const encryptOutgoing = useEncryptionStore((s) => s.encryptOutgoing);
 
     // Keys are derived once encryptionStatus leaves "idle" and "deriving"
     const keysReady = encryptionStatus !== "idle" && encryptionStatus !== "deriving";
+
+    // Presence: broadcast join/leave events to peers in the channel
+    usePresence();
 
     // Step 1: Fetch room data and set current room (no WebSocket yet)
     useEffect(() => {
@@ -56,8 +66,13 @@ export function useChatConnection(roomName: string, roomType: RoomType = "1:1") 
                 return;
             }
 
+            const maxPeers = roomData.maxPeersPerRoom ?? 2;
             const channel = `${appConfig.appName}/${roomData.roomName}`;
-            setCurrentRoom({ name: roomData.roomName, type: roomType, channel });
+            setCurrentRoom({
+                name: roomData.roomName,
+                channel,
+                maxPeersPerRoom: maxPeers,
+            });
         }
 
         fetchRoom();
@@ -65,7 +80,7 @@ export function useChatConnection(roomName: string, roomType: RoomType = "1:1") 
         return () => {
             cancelled = true;
         };
-    }, [isConnected, jwt, roomName, roomType, setCurrentRoom]);
+    }, [isConnected, jwt, roomName, setCurrentRoom]);
 
     // Step 2: Connect WebSocket ONLY after encryption keys are derived.
     // Uses a boolean gate so that further encryptionStatus changes (handshaking→ready)
@@ -122,5 +137,5 @@ export function useChatConnection(roomName: string, roomType: RoomType = "1:1") 
         [sendWsMessage, walletAddress, isEncryptionReady, encryptOutgoing, addMessage]
     );
 
-    return { connectionStatus, encryptionStatus, isEncryptionReady, sendChatMessage };
+    return { connectionStatus, encryptionStatus, isEncryptionReady, isRoomFull, sendChatMessage };
 }

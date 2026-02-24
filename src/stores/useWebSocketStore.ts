@@ -182,7 +182,22 @@ async function handleIncomingMessage(raw: Record<string, unknown>) {
             );
             break;
 
-        case "user_joined":
+        case "user_joined": {
+            chatStore.addOnlineUser(data.address as string);
+            // Reply so the joiner discovers us
+            const { useAuthStore: AuthStore } = await import("./useAuthStore");
+            const myAddr = AuthStore.getState().walletAddress;
+            if (myAddr && (data.address as string).toLowerCase() !== myAddr.toLowerCase()) {
+                const wsStore = useWebSocketStore.getState();
+                wsStore.sendMessage("broadcastToChannel", {
+                    type: "i_am_here",
+                    address: myAddr,
+                });
+            }
+            break;
+        }
+
+        case "i_am_here":
             chatStore.addOnlineUser(data.address as string);
             break;
 

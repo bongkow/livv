@@ -10,10 +10,15 @@ export interface ChatMessage {
 
 export type RoomType = "1:1" | "group";
 
+/** Derive room type from capacity: >2 peers = group, otherwise 1:1 */
+export function deriveRoomType(maxPeersPerRoom: number): RoomType {
+    return maxPeersPerRoom > 2 ? "group" : "1:1";
+}
+
 export interface Room {
     name: string;
-    type: RoomType;
     channel: string;
+    maxPeersPerRoom: number;
 }
 
 interface ChatState {
@@ -58,7 +63,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     },
 
     setCurrentRoom: (room: Room) => {
-        set({ currentRoom: room, messages: [] });
+        set({ currentRoom: room, messages: [], onlineUsers: [] });
     },
 
     clearMessages: () => set({ messages: [] }),

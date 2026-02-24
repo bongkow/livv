@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useAuthStore } from "@/stores/useAuthStore";
 import ChatRoom from "@/components/ChatRoom";
 import ConnectWalletButton from "@/components/ConnectWalletButton";
-import type { RoomType } from "@/stores/useChatStore";
 
 const DEFAULT_ROOM = "general";
 
@@ -15,7 +14,6 @@ function ChatPageContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const roomName = searchParams.get("room") || DEFAULT_ROOM;
-    const roomType = (searchParams.get("type") || "1:1") as RoomType;
 
     // Validate wallet connection + token before entering room
     useEffect(() => {
@@ -55,7 +53,7 @@ function ChatPageContent() {
 
             {/* Chat */}
             <main className="flex-1 overflow-hidden">
-                <ChatRoom roomName={roomName} roomType={roomType} />
+                <ChatRoom roomName={roomName} />
             </main>
         </div>
     );

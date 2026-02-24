@@ -1,21 +1,20 @@
 "use client";
 
+import Link from "next/link";
+
 import MessageList from "./MessageList";
 import MessageInput from "./MessageInput";
-import OnlineUsers from "./OnlineUsers";
+import PeersInRoom from "./PeersInRoom";
 import { useChatConnection } from "@/hooks/useChatConnection";
-import { useChatStore } from "@/stores/useChatStore";
-
-import type { RoomType } from "@/stores/useChatStore";
+import { useChatStore, deriveRoomType } from "@/stores/useChatStore";
 
 interface ChatRoomProps {
     roomName: string;
-    roomType?: RoomType;
 }
 
-export default function ChatRoom({ roomName, roomType = "1:1" }: ChatRoomProps) {
-    const { connectionStatus, encryptionStatus, isEncryptionReady, sendChatMessage } =
-        useChatConnection(roomName, roomType);
+export default function ChatRoom({ roomName }: ChatRoomProps) {
+    const { connectionStatus, encryptionStatus, isEncryptionReady, isRoomFull, sendChatMessage } =
+        useChatConnection(roomName);
     const currentRoom = useChatStore((s) => s.currentRoom);
 
     // Gate: show preparation screen until everything is ready
@@ -26,6 +25,16 @@ export default function ChatRoom({ roomName, roomType = "1:1" }: ChatRoomProps) 
                 connectionStatus={connectionStatus}
                 encryptionStatus={encryptionStatus}
                 hasRoom={!!currentRoom}
+            />
+        );
+    }
+
+    // Gate: block entry when room is at capacity
+    if (isRoomFull) {
+        return (
+            <RoomFullGate
+                roomName={roomName}
+                maxPeersPerRoom={currentRoom?.maxPeersPerRoom ?? 2}
             />
         );
     }
@@ -43,7 +52,7 @@ export default function ChatRoom({ roomName, roomType = "1:1" }: ChatRoomProps) 
                         <span className="text-sm font-medium">
                             # {currentRoom?.name || roomName}
                         </span>
-                        <span className="text-[11px] text-white/20">{roomType}</span>
+                        <span className="text-[11px] text-white/20">{deriveRoomType(currentRoom?.maxPeersPerRoom ?? 2)}</span>
                     </div>
                     <div className="flex items-center gap-3">
                         <EncryptionBadge status={encryptionStatus} />
@@ -61,7 +70,7 @@ export default function ChatRoom({ roomName, roomType = "1:1" }: ChatRoomProps) 
 
             {/* Sidebar — hidden on mobile */}
             <div className="hidden lg:block">
-                <OnlineUsers />
+                <PeersInRoom />
             </div>
         </div>
     );
@@ -110,10 +119,10 @@ function PreparationGate({
                             <div key={step.label} className="flex items-center gap-2.5">
                                 <StepIndicator done={step.done} active={i === activeIndex} />
                                 <span className={`text-xs ${step.done
-                                        ? "text-white/50"
-                                        : i === activeIndex
-                                            ? "text-white/70 animate-pulse"
-                                            : "text-white/20"
+                                    ? "text-white/50"
+                                    : i === activeIndex
+                                        ? "text-white/70 animate-pulse"
+                                        : "text-white/20"
                                     }`}>
                                     {step.label}
                                     {i === activeIndex && "…"}
@@ -173,4 +182,32 @@ function EncryptionBadge({
     }[status];
 
     return <span className={`text-[11px] ${config.style}`}>{config.text}</span>;
+}
+
+function RoomFullGate({
+    roomName,
+    maxPeersPerRoom,
+}: {
+    roomName: string;
+    maxPeersPerRoom: number;
+}) {
+    return (
+        <div className="flex h-full items-center justify-center">
+            <div className="flex flex-col items-center gap-4 text-center max-w-sm">
+                <span className="text-2xl">🚫</span>
+                <h2 className="text-sm font-medium text-white/70">
+                    # {roomName}
+                </h2>
+                <p className="text-xs text-white/40">
+                    This room is full ({maxPeersPerRoom}/{maxPeersPerRoom})
+                </p>
+                <Link
+                    href="/"
+                    className="border border-white/20 px-4 py-2 text-xs text-white/60 transition-colors hover:text-white/80 hover:border-white/40"
+                >
+                    ← back to rooms
+                </Link>
+            </div>
+        </div>
+    );
 }

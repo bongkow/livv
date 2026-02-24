@@ -29,7 +29,7 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
     );
 
     return (
-        <div className="border-t border-white/[0.08] px-4 py-3">
+        <div className="MessageInput border-t border-white/[0.08] px-4 py-3">
             <div className="flex items-center gap-3">
                 <input
                     ref={inputRef}
@@ -39,12 +39,12 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
                     onKeyDown={handleKeyDown}
                     disabled={disabled}
                     placeholder={disabled ? "Connecting..." : "Message..."}
-                    className="flex-1 bg-transparent border border-white py-2 px-3 text-sm text-white placeholder-white/40 outline-none focus:border-white transition-colors disabled:opacity-30 rounded"
+                    className="MessageInputInput flex-1 bg-transparent border border-white py-2 px-3 text-sm text-white placeholder-white/40 outline-none focus:border-white transition-colors disabled:opacity-30 rounded"
                 />
                 <button
                     onClick={handleSend}
                     disabled={!text.trim() || disabled}
-                    className="text-sm text-white/40 hover:text-white transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+                    className="MessageInputButton border border-white py-2 px-3 text-sm text-white hover:bg-white hover:text-black transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
                 >
                     Send
                 </button>

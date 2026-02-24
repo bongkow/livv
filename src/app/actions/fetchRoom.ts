@@ -3,6 +3,7 @@
 import { DynamoDBClient, GetItemCommand, ScanCommand } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 import { createHash } from "crypto";
+import type { RoomType } from "@/stores/useChatStore";
 
 const ROOMS_TABLE_NAME = "Rooms";
 
@@ -14,8 +15,9 @@ export interface RoomData {
     channelHash: string;
     roomName: string;
     leader: string;
-    roomType: string;
+    roomType: RoomType;
     createdAt: string;
+    maxPeersPerRoom?: number;
 }
 
 function hashRoomNameServer(roomName: string): string {
