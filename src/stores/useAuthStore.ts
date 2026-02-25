@@ -76,6 +76,24 @@ export const useAuthStore = create<AuthStore>()(
                         throw new Error("No token received from auth API");
                     }
 
+                    // Derive master E2E seed if not already cached for this wallet.
+                    // The message is static, so the same wallet always produces
+                    // the same seed — safe to persist in localStorage forever.
+                    const seedKey = appConfig.getMasterSeedStorageKey(address);
+                    if (!localStorage.getItem(seedKey)) {
+                        const e2eSignature = await signer.signMessage(
+                            appConfig.masterE2ESignMessage
+                        );
+                        const seedBuffer = await crypto.subtle.digest(
+                            "SHA-256",
+                            new TextEncoder().encode(e2eSignature)
+                        );
+                        const seedHex = Array.from(new Uint8Array(seedBuffer))
+                            .map((b) => b.toString(16).padStart(2, "0"))
+                            .join("");
+                        localStorage.setItem(seedKey, seedHex);
+                    }
+
                     set({
                         walletAddress: address,
                         jwt,
