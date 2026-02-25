@@ -105,13 +105,18 @@ export function useEncryptionSetup(
                 }
 
                 if (mode === "direct") {
-                    const initMessage = await useEncryptionStore.getState().initiateDirectSession(walletAddress);
-                    if (initMessage) {
-                        sendWsMessage("broadcastToChannel", {
-                            type: "x3dh_init",
-                            ...initMessage,
-                            sender: walletAddress,
-                        });
+                    // Tiebreaker: only the lexicographically lower address initiates X3DH.
+                    // The higher address waits for the x3dh_init message to avoid
+                    // dual-initiation race conditions that produce mismatched root keys.
+                    if (walletAddress.toLowerCase() < peerAddr.toLowerCase()) {
+                        const initMessage = await useEncryptionStore.getState().initiateDirectSession(walletAddress);
+                        if (initMessage) {
+                            sendWsMessage("broadcastToChannel", {
+                                type: "x3dh_init",
+                                ...initMessage,
+                                sender: walletAddress,
+                            });
+                        }
                     }
                 }
             }

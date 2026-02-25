@@ -162,9 +162,11 @@ async function handleIncomingMessage(raw: Record<string, unknown>) {
             break;
 
         case "x3dh_init": {
+            const { useAuthStore: Auth } = await import("./useAuthStore");
+            const myWalletAddress = Auth.getState().walletAddress || "";
             const response = await encryptionStore.respondToDirectSession(
                 data as unknown as import("@/crypto/types").X3DHInitMessage,
-                chatStore.currentRoom?.channel || ""
+                myWalletAddress
             );
             if (response) {
                 const wsStore = useWebSocketStore.getState();
