@@ -69,7 +69,7 @@ export default function ChatRoom({ roomName }: ChatRoomProps) {
             </div>
 
             {/* Sidebar — hidden on mobile */}
-            <div className="hidden lg:block">
+            <div className="PeersInRoom hidden lg:block">
                 <PeersInRoom />
             </div>
         </div>

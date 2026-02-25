@@ -51,23 +51,28 @@ export function usePresence() {
         }
     }, [connectionStatus]);
 
-    // Broadcast user_left on tab close / navigation
+    // Broadcast user_left on unmount (in-app navigation) and tab close
     useEffect(() => {
         if (!walletAddress) return;
 
-        const handleBeforeUnload = () => {
+        const broadcastLeave = () => {
             const { socket, connectionStatus: status } = useWebSocketStore.getState();
             if (socket && status === "connected") {
-                const msg = JSON.stringify({
+                socket.send(JSON.stringify({
                     action: "broadcastToChannel",
                     type: "user_left",
                     address: walletAddress,
-                });
-                socket.send(msg);
+                }));
             }
         };
 
-        window.addEventListener("beforeunload", handleBeforeUnload);
-        return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+        // Best-effort for hard tab close / browser close
+        window.addEventListener("beforeunload", broadcastLeave);
+
+        return () => {
+            window.removeEventListener("beforeunload", broadcastLeave);
+            // Reliable broadcast on component unmount (in-app navigation)
+            broadcastLeave();
+        };
     }, [walletAddress]);
 }
