@@ -183,23 +183,39 @@ async function handleIncomingMessage(raw: Record<string, unknown>) {
             break;
 
         case "user_joined": {
-            chatStore.addOnlineUser(data.address as string);
-            // Reply so the joiner discovers us
+            const peerAddress = data.address as string;
+            chatStore.addOnlineUser(peerAddress);
+
+            // Store peer's public key if included in the presence message
+            if (data.publicKey) {
+                encryptionStore.addPeerPublicKey(peerAddress, data.publicKey as JsonWebKey);
+            }
+
+            // Reply so the joiner discovers us (include our public key)
             const { useAuthStore: AuthStore } = await import("./useAuthStore");
             const myAddr = AuthStore.getState().walletAddress;
-            if (myAddr && (data.address as string).toLowerCase() !== myAddr.toLowerCase()) {
+            if (myAddr && peerAddress.toLowerCase() !== myAddr.toLowerCase()) {
                 const wsStore = useWebSocketStore.getState();
+                const myKeyPair = encryptionStore.encryptionKeyPair;
                 wsStore.sendMessage("broadcastToChannel", {
                     type: "i_am_here",
                     address: myAddr,
+                    ...(myKeyPair ? { publicKey: myKeyPair.publicKey } : {}),
                 });
             }
             break;
         }
 
-        case "i_am_here":
-            chatStore.addOnlineUser(data.address as string);
+        case "i_am_here": {
+            const peerAddr = data.address as string;
+            chatStore.addOnlineUser(peerAddr);
+
+            // Store peer's public key if included in the presence message
+            if (data.publicKey) {
+                encryptionStore.addPeerPublicKey(peerAddr, data.publicKey as JsonWebKey);
+            }
             break;
+        }
 
         case "user_left":
             chatStore.removeOnlineUser(data.address as string);

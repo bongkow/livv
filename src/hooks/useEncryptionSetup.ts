@@ -4,14 +4,18 @@
  * Phase 1 (pre-connect): Derive key pair from wallet signature.
  *   This happens BEFORE the WebSocket connects, gating room entry.
  *
- * Phase 2 (post-connect): Broadcast public key and initialize protocol.
- *   - 1:1: X3DH handshake → Double Ratchet initialization
- *   - Group: Sender key creation → distribution to peers
+ * Phase 2 (post-connect): Initialize protocol event-driven.
+ *   Public keys are now piggy-backed on presence messages (user_joined / i_am_here),
+ *   so we react to peer keys arriving via peerPublicKeys changes instead of
+ *   using a blind 1-second timer.
+ *
+ *   - 1:1 (direct): X3DH handshake → Double Ratchet initialization
+ *   - Group: Sender key creation → distribution to peers as their keys arrive
  */
 
 "use client";
 
-import { useEffect, useCallback } from "react";
+import { useEffect, useRef } from "react";
 import { useEncryptionStore } from "@/stores/useEncryptionStore";
 import type { RoomEncryptionMode } from "@/stores/useEncryptionStore";
 import { useAuthStore } from "@/stores/useAuthStore";
@@ -26,11 +30,12 @@ export function useEncryptionSetup(
     const sendWsMessage = useWebSocketStore((s) => s.sendMessage);
 
     const encryptionStatus = useEncryptionStore((s) => s.encryptionStatus);
-    const encryptionKeyPair = useEncryptionStore((s) => s.encryptionKeyPair);
     const deriveKeyPair = useEncryptionStore((s) => s.deriveKeyPair);
-    const initializeGroupSenderKey = useEncryptionStore((s) => s.initializeGroupSenderKey);
-    const initiateDirectSession = useEncryptionStore((s) => s.initiateDirectSession);
     const reset = useEncryptionStore((s) => s.reset);
+    const peerPublicKeys = useEncryptionStore((s) => s.peerPublicKeys);
+
+    // Track which peers we've already initiated a handshake with
+    const handshakedPeers = useRef<Set<string>>(new Set());
 
     // Phase 1: Derive key pair BEFORE WebSocket — only needs channelHash
     useEffect(() => {
@@ -39,81 +44,106 @@ export function useEncryptionSetup(
         deriveKeyPair(channelHash);
     }, [channelHash, roomEncryptionMode, encryptionStatus, deriveKeyPair]);
 
-    // Phase 2a: Broadcast public key after connecting to WebSocket
+    // Phase 2: React to peer public keys arriving and initiate handshake per-peer.
+    // This replaces the old flow of: broadcast encryption_pubkey → wait 1s → init.
+    // Now, as soon as a peer's key arrives via presence messages, we start immediately.
     useEffect(() => {
         if (
             connectionStatus !== "connected" ||
-            encryptionStatus !== "handshaking" ||
-            !encryptionKeyPair
+            (encryptionStatus !== "handshaking" && encryptionStatus !== "ready") ||
+            !walletAddress
         ) {
             return;
         }
 
-        sendWsMessage("broadcastToChannel", {
-            type: "encryption_pubkey",
-            publicKey: encryptionKeyPair.publicKey,
-            sender: walletAddress,
-        });
-    }, [connectionStatus, encryptionStatus, encryptionKeyPair, sendWsMessage, walletAddress]);
+        const encryptionStore = useEncryptionStore.getState();
+        const { encryptionKeyPair, encryptionMode } = encryptionStore;
+        if (!encryptionKeyPair) return;
 
-    // Phase 2b: Initialize protocol based on room type
-    const initializeEncryption = useCallback(async () => {
-        if (
-            connectionStatus !== "connected" ||
-            encryptionStatus !== "handshaking" ||
-            !encryptionKeyPair
-        ) {
-            return;
-        }
+        const peerAddresses = Object.keys(peerPublicKeys);
+        const newPeers = peerAddresses.filter(
+            (addr) => !handshakedPeers.current.has(addr) && addr !== walletAddress.toLowerCase()
+        );
 
-        if (roomEncryptionMode === "group") {
-            const { encryptedKeys } = await initializeGroupSenderKey(walletAddress);
-            for (const encryptedKey of encryptedKeys) {
-                sendWsMessage("broadcastToChannel", {
-                    type: "sender_key",
-                    ...encryptedKey,
-                    sender: walletAddress,
-                });
+        if (newPeers.length === 0) return;
+
+        const mode = encryptionMode || (roomEncryptionMode === "group" ? "group" : "direct");
+
+        (async () => {
+            for (const peerAddr of newPeers) {
+                handshakedPeers.current.add(peerAddr);
+
+                if (mode === "group") {
+                    // Initialize our sender key if not yet done, then distribute to this peer
+                    let senderKeyState = encryptionStore.mySenderKeyState;
+                    if (!senderKeyState) {
+                        const result = await useEncryptionStore.getState().initializeGroupSenderKey(walletAddress);
+                        senderKeyState = result.senderKey;
+                        // Send existing encrypted keys (for peers that had keys before this call)
+                        for (const encryptedKey of result.encryptedKeys) {
+                            sendWsMessage("broadcastToChannel", {
+                                type: "sender_key",
+                                ...encryptedKey,
+                                sender: walletAddress,
+                            });
+                        }
+                    } else {
+                        // Sender key already exists, just distribute to the new peer
+                        const { encryptSenderKeyForPeer } = await import("@/crypto/senderKeyDistribution");
+                        const encrypted = await encryptSenderKeyForPeer(
+                            senderKeyState.chainKey,
+                            encryptionKeyPair.privateKey,
+                            peerPublicKeys[peerAddr],
+                            walletAddress
+                        );
+                        sendWsMessage("broadcastToChannel", {
+                            type: "sender_key",
+                            ...encrypted,
+                            sender: walletAddress,
+                        });
+                    }
+                }
+
+                if (mode === "direct") {
+                    const initMessage = await useEncryptionStore.getState().initiateDirectSession(walletAddress);
+                    if (initMessage) {
+                        sendWsMessage("broadcastToChannel", {
+                            type: "x3dh_init",
+                            ...initMessage,
+                            sender: walletAddress,
+                        });
+                    }
+                }
             }
-        }
 
-        if (roomEncryptionMode === "direct") {
-            const initMessage = await initiateDirectSession(walletAddress);
-            if (initMessage) {
-                sendWsMessage("broadcastToChannel", {
-                    type: "x3dh_init",
-                    ...initMessage,
-                    sender: walletAddress,
-                });
+            // Mark ready after handshake initiation
+            if (encryptionStatus === "handshaking") {
+                useEncryptionStore.setState({ encryptionStatus: "ready" });
             }
-        }
+        })();
+    }, [connectionStatus, encryptionStatus, peerPublicKeys, walletAddress, roomEncryptionMode, sendWsMessage]);
 
-        // Mark ready after handshake initiation.
-        // For 1:1 rooms without a peer yet, the plaintext fallback will work.
-        // When a peer responds, the Double Ratchet upgrades automatically.
-        useEncryptionStore.setState({ encryptionStatus: "ready" });
-    }, [
-        connectionStatus,
-        encryptionStatus,
-        encryptionKeyPair,
-        roomEncryptionMode,
-        walletAddress,
-        initializeGroupSenderKey,
-        initiateDirectSession,
-        sendWsMessage,
-    ]);
-
-    // Trigger protocol initialization after a short delay for peer key collection
+    // Fallback: if no peers respond within 200ms, mark as ready so the
+    // plaintext fallback works for empty rooms or peers without encryption.
+    // This replaces the old 1-second blind wait — 200ms is enough for the
+    // presence round-trip, and if a peer arrives later the effect above
+    // will still initiate the handshake.
     useEffect(() => {
         if (connectionStatus !== "connected" || encryptionStatus !== "handshaking") return;
 
-        const timer = setTimeout(initializeEncryption, 1000);
+        const timer = setTimeout(() => {
+            const current = useEncryptionStore.getState().encryptionStatus;
+            if (current === "handshaking") {
+                useEncryptionStore.setState({ encryptionStatus: "ready" });
+            }
+        }, 200);
         return () => clearTimeout(timer);
-    }, [connectionStatus, encryptionStatus, initializeEncryption]);
+    }, [connectionStatus, encryptionStatus]);
 
-    // Cleanup on unmount
+    // Reset handshaked peers tracking on unmount
     useEffect(() => {
         return () => {
+            handshakedPeers.current.clear();
             reset();
         };
     }, [reset]);
