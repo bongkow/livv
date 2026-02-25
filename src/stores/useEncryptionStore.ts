@@ -9,7 +9,12 @@
 
 import { create } from "zustand";
 import { BrowserProvider } from "ethers";
-import { generateEncryptionKeyPair } from "@/crypto/generateEncryptionKeyPair";
+import {
+    generateEncryptionKeyPair,
+    deriveRoomKeyPairFromMasterSeed,
+} from "@/crypto/generateEncryptionKeyPair";
+import { appConfig } from "@/config/appConfig";
+import { useAuthStore } from "@/stores/useAuthStore";
 import {
     createSenderKeyState,
     encryptWithSenderKey,
@@ -129,6 +134,19 @@ export const useEncryptionStore = create<EncryptionStore>()((set, get) => ({
         set({ encryptionStatus: "deriving", errorMessage: "" });
 
         try {
+            const walletAddress = useAuthStore.getState().walletAddress;
+            const seedKey = appConfig.getMasterSeedStorageKey(walletAddress);
+            let masterSeedHex = localStorage.getItem(seedKey);
+
+            if (masterSeedHex) {
+                // Fast path: derive room key from cached master seed — no wallet popup
+                const keyPair = await deriveRoomKeyPairFromMasterSeed(masterSeedHex, channelHash);
+                set({ encryptionKeyPair: keyPair, encryptionStatus: "handshaking" });
+                return;
+            }
+
+            // Fallback: master seed not cached yet (pre-update session).
+            // Sign the master E2E message once, cache the seed, then derive.
             const ethereum = (
                 window as unknown as {
                     ethereum?: {
@@ -143,8 +161,17 @@ export const useEncryptionStore = create<EncryptionStore>()((set, get) => ({
 
             const provider = new BrowserProvider(ethereum as never);
             const signer = await provider.getSigner();
-            const keyPair = await generateEncryptionKeyPair(signer, channelHash);
+            const e2eSignature = await signer.signMessage(appConfig.masterE2ESignMessage);
+            const seedBuffer = await crypto.subtle.digest(
+                "SHA-256",
+                new TextEncoder().encode(e2eSignature)
+            );
+            masterSeedHex = Array.from(new Uint8Array(seedBuffer))
+                .map((b) => b.toString(16).padStart(2, "0"))
+                .join("");
+            localStorage.setItem(seedKey, masterSeedHex);
 
+            const keyPair = await deriveRoomKeyPairFromMasterSeed(masterSeedHex, channelHash);
             set({ encryptionKeyPair: keyPair, encryptionStatus: "handshaking" });
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : "Key derivation failed";
