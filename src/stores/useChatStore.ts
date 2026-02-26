@@ -52,14 +52,18 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
 
     addOnlineUser: (user: string) => {
         const { onlineUsers } = get();
-        if (!onlineUsers.includes(user)) {
+        const normalized = user.toLowerCase();
+        if (!onlineUsers.some((u) => u.toLowerCase() === normalized)) {
             set({ onlineUsers: [...onlineUsers, user] });
         }
     },
 
     removeOnlineUser: (user: string) => {
+        const normalized = user.toLowerCase();
         set((state) => ({
-            onlineUsers: state.onlineUsers.filter((u) => u !== user),
+            onlineUsers: state.onlineUsers.filter(
+                (u) => u.toLowerCase() !== normalized
+            ),
         }));
     },
 
