@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import ConnectWalletButton from "@/components/ConnectWalletButton";
 import RoomGrid from "@/components/RoomGrid";
 import { useAuthStore } from "@/stores/useAuthStore";
+import { appConfig } from "@/config/appConfig";
 import { useRouter } from "next/navigation";
 
 export default function LandingPage() {
@@ -28,7 +29,7 @@ export default function LandingPage() {
       <header className="flex items-center justify-between border-b border-white/[0.08] px-5 py-4">
         <div className="flex items-center gap-3">
           <h1 className="text-sm font-medium text-white/80">livv</h1>
-          <span className="text-[11px] text-white/20">rooms</span>
+          <span className="text-[10px] text-white font-mono">v{appConfig.appVersion}</span>
         </div>
         <ConnectWalletButton />
       </header>

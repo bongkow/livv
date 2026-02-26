@@ -3,6 +3,7 @@
 import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuthStore } from "@/stores/useAuthStore";
+import { appConfig } from "@/config/appConfig";
 import ChatRoom from "@/components/ChatRoom";
 import ConnectWalletButton from "@/components/ConnectWalletButton";
 
@@ -40,6 +41,7 @@ function ChatPageContent() {
                     >
                         livv
                     </button>
+                    <span className="text-[10px] text-white/20 font-mono">v{appConfig.appVersion}</span>
 
                     <div className="h-3 w-px bg-white/10" />
 
