@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import MessageList from "./MessageList";
 import MessageInput from "./MessageInput";
@@ -13,9 +14,15 @@ interface ChatRoomProps {
 }
 
 export default function ChatRoom({ roomName }: ChatRoomProps) {
-    const { connectionStatus, encryptionStatus, isEncryptionReady, isRoomFull, sendChatMessage } =
+    const { connectionStatus, encryptionStatus, isEncryptionReady, isRoomFull, sendChatMessage, exitRoom } =
         useChatConnection(roomName);
     const currentRoom = useChatStore((s) => s.currentRoom);
+    const router = useRouter();
+
+    const handleExitRoom = () => {
+        exitRoom();
+        router.push("/");
+    };
 
     // Gate: show preparation screen until everything is ready
     if (encryptionStatus === "idle" || encryptionStatus === "deriving" || encryptionStatus === "error") {
@@ -57,6 +64,12 @@ export default function ChatRoom({ roomName }: ChatRoomProps) {
                     <div className="flex items-center gap-3">
                         <EncryptionBadge status={encryptionStatus} />
                         <StatusDot status={connectionStatus} />
+                        <button
+                            onClick={handleExitRoom}
+                            className="border border-white/15 px-3 py-1 text-[11px] text-white/40 transition-colors hover:text-white/80 hover:border-white/40"
+                        >
+                            exit
+                        </button>
                     </div>
                 </div>
 

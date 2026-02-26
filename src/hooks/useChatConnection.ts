@@ -32,6 +32,7 @@ export function useChatConnection(roomName: string) {
     const sendWsMessage = useWebSocketStore((s) => s.sendMessage);
 
     const setCurrentRoom = useChatStore((s) => s.setCurrentRoom);
+    const clearRoom = useChatStore((s) => s.clearRoom);
     const currentRoom = useChatStore((s) => s.currentRoom);
     const channelHash = currentRoom?.channel?.split("/").pop() ?? null;
 
@@ -44,6 +45,7 @@ export function useChatConnection(roomName: string) {
     const encryptionMode = toEncryptionMode(roomType);
     const { encryptionStatus, isEncryptionReady } = useEncryptionSetup(channelHash, encryptionMode);
     const encryptOutgoing = useEncryptionStore((s) => s.encryptOutgoing);
+    const resetEncryption = useEncryptionStore((s) => s.reset);
 
     // Keys are derived once encryptionStatus leaves "idle" and "deriving"
     const keysReady = encryptionStatus !== "idle" && encryptionStatus !== "deriving";
@@ -98,6 +100,24 @@ export function useChatConnection(roomName: string) {
 
     const addMessage = useChatStore((s) => s.addMessage);
 
+    /** Gracefully leave the room: broadcast user_left, disconnect WS, reset state */
+    const exitRoom = useCallback(() => {
+        // Broadcast user_left so peers know we left
+        if (connectionStatus === "connected" && walletAddress) {
+            sendWsMessage("broadcastToChannel", {
+                type: "user_left",
+                address: walletAddress,
+            });
+        }
+
+        // Small delay so the WebSocket flushes the user_left message before teardown
+        setTimeout(() => {
+            disconnect();
+            resetEncryption();
+            clearRoom();
+        }, 150);
+    }, [connectionStatus, walletAddress, sendWsMessage, disconnect, resetEncryption, clearRoom]);
+
     const sendChatMessage = useCallback(
         async (text: string) => {
             if (!text.trim()) return;
@@ -137,5 +157,5 @@ export function useChatConnection(roomName: string) {
         [sendWsMessage, walletAddress, isEncryptionReady, encryptOutgoing, addMessage]
     );
 
-    return { connectionStatus, encryptionStatus, isEncryptionReady, isRoomFull, sendChatMessage };
+    return { connectionStatus, encryptionStatus, isEncryptionReady, isRoomFull, sendChatMessage, exitRoom };
 }
