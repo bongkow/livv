@@ -110,9 +110,12 @@ export function useChatConnection(roomName: string) {
             });
         }
 
-        disconnect();
-        resetEncryption();
-        clearRoom();
+        // Small delay so the WebSocket flushes the user_left message before teardown
+        setTimeout(() => {
+            disconnect();
+            resetEncryption();
+            clearRoom();
+        }, 150);
     }, [connectionStatus, walletAddress, sendWsMessage, disconnect, resetEncryption, clearRoom]);
 
     const sendChatMessage = useCallback(
