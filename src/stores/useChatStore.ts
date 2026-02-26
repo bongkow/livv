@@ -34,6 +34,7 @@ interface ChatActions {
     removeOnlineUser: (user: string) => void;
     setCurrentRoom: (room: Room) => void;
     clearMessages: () => void;
+    clearRoom: () => void;
 }
 
 type ChatStore = ChatState & ChatActions;
@@ -67,4 +68,6 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     },
 
     clearMessages: () => set({ messages: [] }),
+
+    clearRoom: () => set({ currentRoom: null, messages: [], onlineUsers: [] }),
 }));
