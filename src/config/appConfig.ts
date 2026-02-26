@@ -2,6 +2,7 @@ export const APP_NAME = "livv";
 
 export const appConfig = {
   appName: APP_NAME,
+  appVersion: process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0",
   websocketUrl: "wss://ws.bongkow.com",
   authApiBaseUrl: "https://api.bongkow.com",
   authEndpoint: "/public/auth/get-token",
