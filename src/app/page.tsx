@@ -24,7 +24,7 @@ export default function LandingPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-black">
+    <div className="LandingPage flex min-h-screen flex-col bg-black">
       {/* Header */}
       <header className="flex items-center justify-between border-b border-white/[0.08] px-5 py-4">
         <div className="flex items-center gap-3">

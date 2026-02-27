@@ -50,7 +50,7 @@ export default function ChatRoom({ roomName }: ChatRoomProps) {
 
 
     return (
-        <div className="flex h-full border border-white/[0.08]">
+        <div className="ChatRoom flex h-full border border-white/[0.08]">
             {/* Main chat */}
             <div className="flex flex-1 flex-col min-w-0">
                 {/* Header */}
