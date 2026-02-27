@@ -20,7 +20,7 @@ export default function RoomCard({ room, isSignedIn, onEnter }: RoomCardProps) {
                     <h3 className="text-sm font-medium text-white">
                         {room.roomName}
                     </h3>
-                    <span className="text-[10px] text-white/20 border border-white/[0.08] px-1.5 py-0.5">
+                    <span className="text-[10px] text-white/20 border border-white px-1.5 py-0.5">
                         {typeLabel}
                     </span>
                     <span className="text-[10px] text-white/30 font-mono">
