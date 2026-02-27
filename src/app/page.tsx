@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import ConnectWalletButton from "@/components/ConnectWalletButton";
+import HeroSection from "@/components/HeroSection";
+import FeatureGrid from "@/components/FeatureGrid";
 import RoomGrid from "@/components/RoomGrid";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { appConfig } from "@/config/appConfig";
@@ -34,19 +37,32 @@ export default function LandingPage() {
         <ConnectWalletButton />
       </header>
 
+      {/* Hero */}
+      <HeroSection />
+
+      {/* Features */}
+      <FeatureGrid />
+
       {/* Room grid */}
-      <main className="flex-1 p-5">
+      <main className="flex-1 px-5 pb-8">
+        <div className="flex items-baseline justify-between mb-4">
+          <h2 className="text-xs font-medium text-white/30 uppercase tracking-widest">
+            Rooms
+          </h2>
+        </div>
         <RoomGrid isSignedIn={isConnected} onEnterRoom={handleEnterRoom} />
       </main>
 
       {/* Footer */}
       <footer className="border-t border-white/[0.08] px-5 py-3">
-        <div className="flex items-center gap-4 text-[11px] text-white/15">
-          <span>real-time rooms</span>
-          <span>·</span>
-          <span>web3 auth</span>
-          <span>·</span>
-          <span>games coming soon</span>
+        <div className="flex items-center justify-between text-[11px] text-white/15">
+          <span>end-to-end encrypted · zero-knowledge server · ephemeral messages</span>
+          <Link
+            href="/encryption"
+            className="hover:text-white/40 transition-colors"
+          >
+            encryption details →
+          </Link>
         </div>
       </footer>
     </div>
