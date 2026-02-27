@@ -10,6 +10,7 @@ import { fetchRoomByName } from "@/app/actions/fetchRoom";
 import { useEncryptionSetup } from "./useEncryptionSetup";
 import { useEncryptionStore } from "@/stores/useEncryptionStore";
 import type { RoomEncryptionMode } from "@/stores/useEncryptionStore";
+import { useFileTransferStore } from "@/stores/useFileTransferStore";
 import { usePresence } from "./usePresence";
 
 /**
@@ -99,6 +100,7 @@ export function useChatConnection(roomName: string) {
     }, [jwt, currentRoom?.channel, keysReady]);
 
     const addMessage = useChatStore((s) => s.addMessage);
+    const sendFileTransfer = useFileTransferStore((s) => s.sendFile);
 
     /** Gracefully leave the room: broadcast user_left, disconnect WS, reset state */
     const exitRoom = useCallback(() => {
@@ -157,5 +159,22 @@ export function useChatConnection(roomName: string) {
         [sendWsMessage, walletAddress, isEncryptionReady, encryptOutgoing, addMessage]
     );
 
-    return { connectionStatus, encryptionStatus, isEncryptionReady, isRoomFull, sendChatMessage, exitRoom };
+    /** Send an image or video file (chunked + encrypted). */
+    const sendFile = useCallback(
+        async (file: File) => {
+            await sendFileTransfer(
+                file,
+                walletAddress,
+                sendWsMessage,
+                isEncryptionReady
+                    ? (plaintext: string, sender: string) =>
+                        encryptOutgoing(plaintext, sender) as Promise<Record<string, unknown> | null>
+                    : null,
+                addMessage,
+            );
+        },
+        [sendFileTransfer, walletAddress, sendWsMessage, isEncryptionReady, encryptOutgoing, addMessage]
+    );
+
+    return { connectionStatus, encryptionStatus, isEncryptionReady, isRoomFull, sendChatMessage, sendFile, exitRoom };
 }

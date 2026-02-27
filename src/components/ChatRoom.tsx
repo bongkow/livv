@@ -14,7 +14,7 @@ interface ChatRoomProps {
 }
 
 export default function ChatRoom({ roomName }: ChatRoomProps) {
-    const { connectionStatus, encryptionStatus, isEncryptionReady, isRoomFull, sendChatMessage, exitRoom } =
+    const { connectionStatus, encryptionStatus, isEncryptionReady, isRoomFull, sendChatMessage, sendFile, exitRoom } =
         useChatConnection(roomName);
     const currentRoom = useChatStore((s) => s.currentRoom);
     const router = useRouter();
@@ -77,6 +77,7 @@ export default function ChatRoom({ roomName }: ChatRoomProps) {
 
                 <MessageInput
                     onSend={sendChatMessage}
+                    onFileSelected={sendFile}
                     disabled={isInputDisabled}
                 />
             </div>

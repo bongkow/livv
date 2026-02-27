@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { appConfig } from "@/config/appConfig";
 import { useChatStore } from "./useChatStore";
 import { useEncryptionStore } from "./useEncryptionStore";
+import { useFileTransferStore } from "./useFileTransferStore";
+import type { FileTransferMeta } from "@/media/types";
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected";
 
@@ -183,6 +185,81 @@ async function handleIncomingMessage(raw: Record<string, unknown>) {
                 data as unknown as import("@/crypto/types").X3DHResponseMessage
             );
             break;
+
+        // ─── File transfers ───
+
+        case "file_transfer_start": {
+            const { useAuthStore: AuthS } = await import("./useAuthStore");
+            const myAddr2 = AuthS.getState().walletAddress;
+            const ftSender = (data.sender as string) || "";
+            if (myAddr2 && ftSender.toLowerCase() === myAddr2.toLowerCase()) break;
+
+            const fileTransferStore = useFileTransferStore.getState();
+            let meta: FileTransferMeta;
+
+            // Metadata may be encrypted (has ciphertext) or plaintext
+            if (data.ciphertext) {
+                try {
+                    const plaintext = await encryptionStore.decryptIncoming(data);
+                    if (plaintext) {
+                        meta = JSON.parse(plaintext) as FileTransferMeta;
+                    } else {
+                        break;
+                    }
+                } catch (err) {
+                    console.warn("[file-transfer] Failed to decrypt metadata:", err);
+                    break;
+                }
+            } else {
+                meta = {
+                    transferId: data.transferId as string,
+                    fileName: data.fileName as string,
+                    fileSize: data.fileSize as number,
+                    mimeType: data.mimeType as string,
+                    totalChunks: data.totalChunks as number,
+                    mediaType: data.mediaType as "image" | "video",
+                    transferKey: data.transferKey as string,
+                };
+            }
+
+            await fileTransferStore.handleTransferStart(
+                meta,
+                ftSender,
+                chatStore.addMessage,
+            );
+            break;
+        }
+
+        case "file_transfer_chunk": {
+            const { useAuthStore: AuthC } = await import("./useAuthStore");
+            const myAddr3 = AuthC.getState().walletAddress;
+            const chunkSender = (data.sender as string) || "";
+            if (myAddr3 && chunkSender.toLowerCase() === myAddr3.toLowerCase()) break;
+
+            const ftStore = useFileTransferStore.getState();
+            await ftStore.handleTransferChunk(
+                data.transferId as string,
+                data.chunkIndex as number,
+                data.ciphertext as string,
+                data.iv as string,
+                chatStore.updateMessageMedia,
+            );
+            break;
+        }
+
+        case "file_transfer_complete": {
+            const { useAuthStore: AuthD } = await import("./useAuthStore");
+            const myAddr4 = AuthD.getState().walletAddress;
+            const completeSender = (data.sender as string) || "";
+            if (myAddr4 && completeSender.toLowerCase() === myAddr4.toLowerCase()) break;
+
+            const ftStore2 = useFileTransferStore.getState();
+            await ftStore2.handleTransferComplete(
+                data.transferId as string,
+                chatStore.updateMessageMedia,
+            );
+            break;
+        }
 
         case "user_joined": {
             const peerAddress = data.address as string;

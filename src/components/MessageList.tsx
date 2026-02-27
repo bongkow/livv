@@ -4,6 +4,7 @@ import { useRef, useEffect } from "react";
 import { useChatStore, type ChatMessage } from "@/stores/useChatStore";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { truncateAddress } from "@/utils/truncateAddress";
+import MediaMessage from "./MediaMessage";
 
 export default function MessageList() {
     const messages = useChatStore((s) => s.messages);
@@ -45,14 +46,18 @@ function MessageBubble({ message }: { message: ChatMessage }) {
                         {truncateAddress(message.sender)}
                     </p>
                 )}
-                <div
-                    className={`inline-block px-3 py-2 text-sm leading-relaxed break-words ${isSelf
-                        ? "bg-white text-black"
-                        : "bg-white/[0.06] text-white/80 border border-white/[0.08]"
-                        }`}
-                >
-                    {message.content}
-                </div>
+                {message.media ? (
+                    <MediaMessage media={message.media} />
+                ) : (
+                    <div
+                        className={`inline-block px-3 py-2 text-sm leading-relaxed break-words ${isSelf
+                            ? "bg-white text-black"
+                            : "bg-white/[0.06] text-white/80 border border-white/[0.08]"
+                            }`}
+                    >
+                        {message.content}
+                    </div>
+                )}
                 <p className="text-[10px] text-white/20 mt-0.5">{time}</p>
             </div>
         </div>
