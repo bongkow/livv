@@ -49,13 +49,31 @@ export async function generateEncryptionKeyPair(
 // ─── New: master-seed based derivation ───────────────────────────────────────
 
 /**
- * Derive a per-room ECDH key pair from the cached master seed.
- * Purely local — no wallet popup.
- *
- * HKDF params:
- *   - input key material: masterSeed (32 bytes)
- *   - salt: "livv-e2e-room-key"
- *   - info: channelHash (unique per room)
+ * Derive a per-room ECDH key pair from a non-extractable HKDF CryptoKey
+ * retrieved from IndexedDB. Purely local — no wallet popup, no raw seed exposure.
+ */
+export async function deriveRoomKeyPairFromMasterKey(
+    masterKey: CryptoKey,
+    channelHash: string
+): Promise<EncryptionKeyPair> {
+    const roomSeed = await crypto.subtle.deriveBits(
+        {
+            name: "HKDF",
+            hash: "SHA-256",
+            salt: new TextEncoder().encode("livv-e2e-room-key"),
+            info: new TextEncoder().encode(channelHash),
+        },
+        masterKey,
+        256
+    );
+
+    const privateKey = await seedToEcdhKeyPair(roomSeed);
+    const publicKey = await exportPublicKeyAsJwk(privateKey);
+    return { publicKey, privateKey };
+}
+
+/**
+ * @deprecated Use {@link deriveRoomKeyPairFromMasterKey} with IndexedDB CryptoKey instead.
  */
 export async function deriveRoomKeyPairFromMasterSeed(
     masterSeedHex: string,

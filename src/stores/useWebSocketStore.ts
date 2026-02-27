@@ -148,7 +148,7 @@ async function handleIncomingMessage(raw: Record<string, unknown>) {
         }
 
         case "encryption_pubkey":
-            encryptionStore.addPeerPublicKey(
+            await encryptionStore.addPeerPublicKey(
                 data.sender as string,
                 data.publicKey as JsonWebKey
             );
@@ -190,7 +190,7 @@ async function handleIncomingMessage(raw: Record<string, unknown>) {
 
             // Store peer's public key if included in the presence message
             if (data.publicKey) {
-                encryptionStore.addPeerPublicKey(peerAddress, data.publicKey as JsonWebKey);
+                await encryptionStore.addPeerPublicKey(peerAddress, data.publicKey as JsonWebKey);
             }
 
             // Reply so the joiner discovers us (include our public key)
@@ -214,7 +214,7 @@ async function handleIncomingMessage(raw: Record<string, unknown>) {
 
             // Store peer's public key if included in the presence message
             if (data.publicKey) {
-                encryptionStore.addPeerPublicKey(peerAddr, data.publicKey as JsonWebKey);
+                await encryptionStore.addPeerPublicKey(peerAddr, data.publicKey as JsonWebKey);
             }
             break;
         }

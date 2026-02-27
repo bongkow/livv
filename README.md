@@ -76,6 +76,7 @@ src/
 │   ├── symmetricRatchet.ts       # Symmetric key ratchet
 │   ├── aesGcm.ts           # AES-256-GCM encrypt/decrypt
 │   ├── generateEncryptionKeyPair.ts # Deterministic key derivation
+│   ├── masterSeedStore.ts  # Non-extractable seed storage (IndexedDB)
 │   └── types.ts            # Shared crypto types
 ├── hooks/                  # React hooks
 │   ├── useChatConnection.ts    # Room lifecycle orchestrator
@@ -129,6 +130,14 @@ yarn version:major   # 0.1.0 → 1.0.0
 | **Forward Secrecy** | Double Ratchet ratchets keys every message (1:1); re-key on member leave (group) |
 | **No Trust in Server** | All encryption/decryption happens client-side; server is a dumb relay |
 | **Pseudonymity** | No PII — only Ethereum addresses |
+
+## Changelog
+
+### 2026-02-27 — Security Hardening
+
+- **Non-extractable key storage (IndexedDB)**: Master E2E seeds are now stored as non-extractable `CryptoKey` objects in IndexedDB instead of hex strings in `localStorage`. Raw seed bytes can no longer be read by JavaScript, preventing exfiltration via XSS. Existing `localStorage` seeds are automatically migrated on first use.
+- **Peer public key validation**: All incoming ECDH public keys (presence messages, X3DH handshakes) are validated before use — structural checks (`kty`, `crv`, `x`, `y`) plus Web Crypto `importKey` to verify the point lies on the P-256 curve. Invalid keys are rejected with a console warning.
+- **Content Security Policy & security headers**: Added CSP (`default-src 'self'`, scoped `connect-src` for WebSocket/API), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, and `Permissions-Policy` restricting camera/microphone/geolocation.
 
 ## License
 

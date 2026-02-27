@@ -99,3 +99,38 @@ export async function importPublicKey(jwk: JsonWebKey): Promise<CryptoKey> {
         []
     );
 }
+
+/**
+ * Validate that a JWK represents a valid ECDH P-256 public key.
+ *
+ * Checks:
+ *   1. Required fields (kty, crv, x, y) are present and well-typed
+ *   2. kty === "EC" and crv === "P-256"
+ *   3. No private key component (d) is present
+ *   4. The point actually lies on the P-256 curve (via Web Crypto importKey)
+ */
+export async function validatePublicKeyJwk(jwk: unknown): Promise<boolean> {
+    if (!jwk || typeof jwk !== "object") return false;
+
+    const key = jwk as Record<string, unknown>;
+
+    // Structural checks
+    if (key.kty !== "EC" || key.crv !== "P-256") return false;
+    if (typeof key.x !== "string" || typeof key.y !== "string") return false;
+    if (key.x.length === 0 || key.y.length === 0) return false;
+    if ("d" in key && key.d !== undefined) return false; // reject private keys
+
+    // Cryptographic validation — importKey verifies the point is on the curve
+    try {
+        await crypto.subtle.importKey(
+            "jwk",
+            { kty: "EC", crv: "P-256", x: key.x, y: key.y },
+            { name: "ECDH", namedCurve: ECDH_CURVE },
+            false,
+            []
+        );
+        return true;
+    } catch {
+        return false;
+    }
+}
