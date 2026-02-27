@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import { BrowserProvider } from "ethers";
 import { APP_NAME, appConfig } from "@/config/appConfig";
 import { isTokenExpired, getTokenAddress } from "@/utils/isTokenExpired";
+import { storeMasterSeed, hasMasterSeed } from "@/crypto/masterSeedStore";
 
 interface AuthState {
     walletAddress: string;
@@ -76,11 +77,10 @@ export const useAuthStore = create<AuthStore>()(
                         throw new Error("No token received from auth API");
                     }
 
-                    // Derive master E2E seed if not already cached for this wallet.
-                    // The message is static, so the same wallet always produces
-                    // the same seed — safe to persist in localStorage forever.
-                    const seedKey = appConfig.getMasterSeedStorageKey(address);
-                    if (!localStorage.getItem(seedKey)) {
+                    // Derive master E2E seed if not already stored.
+                    // The seed is stored as a non-extractable CryptoKey in IndexedDB
+                    // so that XSS attacks cannot read the raw seed bytes.
+                    if (!(await hasMasterSeed(address))) {
                         const e2eSignature = await signer.signMessage(
                             appConfig.masterE2ESignMessage
                         );
@@ -88,10 +88,7 @@ export const useAuthStore = create<AuthStore>()(
                             "SHA-256",
                             new TextEncoder().encode(e2eSignature)
                         );
-                        const seedHex = Array.from(new Uint8Array(seedBuffer))
-                            .map((b) => b.toString(16).padStart(2, "0"))
-                            .join("");
-                        localStorage.setItem(seedKey, seedHex);
+                        await storeMasterSeed(address, seedBuffer);
                     }
 
                     set({

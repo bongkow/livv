@@ -10,10 +10,10 @@
 import { create } from "zustand";
 import { BrowserProvider } from "ethers";
 import {
-    generateEncryptionKeyPair,
-    deriveRoomKeyPairFromMasterSeed,
+    deriveRoomKeyPairFromMasterKey,
 } from "@/crypto/generateEncryptionKeyPair";
 import { appConfig } from "@/config/appConfig";
+import { getMasterSeedKey, migrateFromLocalStorage } from "@/crypto/masterSeedStore";
 import { useAuthStore } from "@/stores/useAuthStore";
 import {
     createSenderKeyState,
@@ -34,7 +34,7 @@ import {
     encryptWithDoubleRatchet,
     decryptWithDoubleRatchet,
 } from "@/crypto/doubleRatchet";
-import { exportPublicKey } from "@/crypto/deriveSharedSecret";
+import { exportPublicKey, validatePublicKeyJwk } from "@/crypto/deriveSharedSecret";
 import type {
     EncryptionKeyPair,
     SenderKeyState,
@@ -71,8 +71,8 @@ interface EncryptionActions {
     /** Derive ECDH key pair from Ethereum wallet signature */
     deriveKeyPair: (channelHash: string) => Promise<void>;
 
-    /** Store a peer's ECDH public key */
-    addPeerPublicKey: (address: string, publicKey: JsonWebKey) => void;
+    /** Store a peer's ECDH public key (validates the key first) */
+    addPeerPublicKey: (address: string, publicKey: JsonWebKey) => Promise<void>;
     removePeerPublicKey: (address: string) => void;
 
     /** 1:1: Initiate X3DH handshake */
@@ -136,17 +136,22 @@ export const useEncryptionStore = create<EncryptionStore>()((set, get) => ({
         try {
             const walletAddress = useAuthStore.getState().walletAddress;
             const seedKey = appConfig.getMasterSeedStorageKey(walletAddress);
-            let masterSeedHex = localStorage.getItem(seedKey);
 
-            if (masterSeedHex) {
-                // Fast path: derive room key from cached master seed — no wallet popup
-                const keyPair = await deriveRoomKeyPairFromMasterSeed(masterSeedHex, channelHash);
+            // Fast path: non-extractable CryptoKey already in IndexedDB
+            let masterKey = await getMasterSeedKey(walletAddress);
+
+            // Migration: if old hex seed exists in localStorage, move it to IndexedDB
+            if (!masterKey) {
+                masterKey = await migrateFromLocalStorage(walletAddress, seedKey);
+            }
+
+            if (masterKey) {
+                const keyPair = await deriveRoomKeyPairFromMasterKey(masterKey, channelHash);
                 set({ encryptionKeyPair: keyPair, encryptionStatus: "handshaking" });
                 return;
             }
 
-            // Fallback: master seed not cached yet (pre-update session).
-            // Sign the master E2E message once, cache the seed, then derive.
+            // Fallback: no seed anywhere — sign the master E2E message, store in IndexedDB.
             const ethereum = (
                 window as unknown as {
                     ethereum?: {
@@ -166,12 +171,16 @@ export const useEncryptionStore = create<EncryptionStore>()((set, get) => ({
                 "SHA-256",
                 new TextEncoder().encode(e2eSignature)
             );
-            masterSeedHex = Array.from(new Uint8Array(seedBuffer))
-                .map((b) => b.toString(16).padStart(2, "0"))
-                .join("");
-            localStorage.setItem(seedKey, masterSeedHex);
 
-            const keyPair = await deriveRoomKeyPairFromMasterSeed(masterSeedHex, channelHash);
+            const { storeMasterSeed } = await import("@/crypto/masterSeedStore");
+            await storeMasterSeed(walletAddress, seedBuffer);
+            masterKey = await getMasterSeedKey(walletAddress);
+
+            if (!masterKey) {
+                throw new Error("Failed to store master seed in IndexedDB");
+            }
+
+            const keyPair = await deriveRoomKeyPairFromMasterKey(masterKey, channelHash);
             set({ encryptionKeyPair: keyPair, encryptionStatus: "handshaking" });
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : "Key derivation failed";
@@ -179,7 +188,12 @@ export const useEncryptionStore = create<EncryptionStore>()((set, get) => ({
         }
     },
 
-    addPeerPublicKey: (address: string, publicKey: JsonWebKey) => {
+    addPeerPublicKey: async (address: string, publicKey: JsonWebKey) => {
+        const valid = await validatePublicKeyJwk(publicKey);
+        if (!valid) {
+            console.warn(`[encryption] Rejected invalid public key from ${address}`);
+            return;
+        }
         set((state) => ({
             peerPublicKeys: { ...state.peerPublicKeys, [address.toLowerCase()]: publicKey },
         }));
@@ -214,6 +228,14 @@ export const useEncryptionStore = create<EncryptionStore>()((set, get) => ({
         const { encryptionKeyPair } = get();
         if (!encryptionKeyPair) return null;
 
+        // Validate the peer's public keys before using them
+        const identityValid = await validatePublicKeyJwk(initMessage.identityPublicKey);
+        const ephemeralValid = await validatePublicKeyJwk(initMessage.ephemeralPublicKey);
+        if (!identityValid || !ephemeralValid) {
+            console.warn(`[encryption] Rejected X3DH init with invalid keys from ${initMessage.fromAddress}`);
+            return null;
+        }
+
         set({ encryptionMode: "direct" });
 
         const { responseMessage, rootKey, ephemeralKeyPair } = await respondToX3DH(
@@ -245,6 +267,14 @@ export const useEncryptionStore = create<EncryptionStore>()((set, get) => ({
     completeDirectSession: async (response: X3DHResponseMessage) => {
         const { encryptionKeyPair, pendingX3DHEphemeralKeyPair } = get();
         if (!encryptionKeyPair || !pendingX3DHEphemeralKeyPair) return;
+
+        // Validate the peer's public keys before using them
+        const identityValid = await validatePublicKeyJwk(response.identityPublicKey);
+        const ephemeralValid = await validatePublicKeyJwk(response.ephemeralPublicKey);
+        if (!identityValid || !ephemeralValid) {
+            console.warn(`[encryption] Rejected X3DH response with invalid keys from ${response.fromAddress}`);
+            return;
+        }
 
         const { rootKey } = await completeX3DH(
             response,

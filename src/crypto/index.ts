@@ -23,6 +23,7 @@ export {
     generateEphemeralKeyPair,
     exportPublicKey,
     importPublicKey,
+    validatePublicKeyJwk,
 } from "./deriveSharedSecret";
 
 // Symmetric ratchet (shared primitive)
