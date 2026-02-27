@@ -11,7 +11,7 @@ export default function PeersInRoom() {
     const maxPeersPerRoom = useChatStore((s) => s.currentRoom?.maxPeersPerRoom ?? 2);
 
     return (
-        <div className="flex flex-col border-l border-white/[0.08] w-48">
+        <div className="PeersInRoom flex flex-col border-l border-white/[0.08] w-48">
             <div className="border-b border-white/[0.08] px-4 py-3">
                 <p className="text-[11px] text-white/30 uppercase tracking-widest">
                     In Room · {onlineUsers.length}/{maxPeersPerRoom}

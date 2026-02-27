@@ -15,7 +15,7 @@ export default function MessageList() {
     }, [messages]);
 
     return (
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+        <div ref={scrollRef} className="MessageList flex-1 overflow-y-auto px-4 py-4 space-y-3">
             {messages.length === 0 && (
                 <div className="flex h-full items-center justify-center">
                     <p className="text-white/20 text-sm">No messages yet</p>
@@ -47,8 +47,8 @@ function MessageBubble({ message }: { message: ChatMessage }) {
                 )}
                 <div
                     className={`inline-block px-3 py-2 text-sm leading-relaxed break-words ${isSelf
-                            ? "bg-white text-black"
-                            : "bg-white/[0.06] text-white/80 border border-white/[0.08]"
+                        ? "bg-white text-black"
+                        : "bg-white/[0.06] text-white/80 border border-white/[0.08]"
                         }`}
                 >
                     {message.content}

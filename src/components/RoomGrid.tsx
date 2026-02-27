@@ -18,7 +18,7 @@ export default function RoomGrid({ isSignedIn, onEnterRoom }: RoomGridProps) {
     }, [rooms.length, loadRooms]);
 
     return (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-px">
+        <div className="RoomGrid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-px">
             {rooms.map((room) => (
                 <RoomCard
                     key={room.roomName}

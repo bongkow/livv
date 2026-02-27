@@ -14,7 +14,7 @@ export default function RoomCard({ room, isSignedIn, onEnter }: RoomCardProps) {
     const typeLabel = deriveRoomType(room.maxPeersPerRoom ?? 2);
 
     return (
-        <div className="flex flex-col justify-between border border-white p-5 gap-4">
+        <div className="RoomCard flex flex-col justify-between border border-white p-5 gap-4">
             <div className="flex flex-col gap-1">
                 <div className="flex items-center gap-2">
                     <h3 className="text-sm font-medium text-white">
