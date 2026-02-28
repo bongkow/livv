@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { MediaAttachment } from "@/media/types";
 
 export interface ChatMessage {
     id: string;
@@ -6,6 +7,8 @@ export interface ChatMessage {
     content: string;
     timestamp: number;
     encrypted?: boolean;
+    /** Present when this message represents a media (image/video) transfer. */
+    media?: MediaAttachment;
 }
 
 export type RoomType = "1:1" | "group";
@@ -29,6 +32,8 @@ interface ChatState {
 
 interface ChatActions {
     addMessage: (message: ChatMessage) => void;
+    /** Patch the `media` field of the message whose media.transferId matches. */
+    updateMessageMedia: (transferId: string, updates: Partial<MediaAttachment>) => void;
     setOnlineUsers: (users: string[]) => void;
     addOnlineUser: (user: string) => void;
     removeOnlineUser: (user: string) => void;
@@ -45,7 +50,34 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     currentRoom: null,
 
     addMessage: (message: ChatMessage) => {
-        set((state) => ({ messages: [...state.messages, message] }));
+        set((state) => {
+            const idx = state.messages.findIndex((m) => m.id === message.id);
+            if (idx >= 0) {
+                // Upsert: merge into existing message, preserving fields like objectUrl
+                const existing = state.messages[idx];
+                const merged: ChatMessage = {
+                    ...existing,
+                    ...message,
+                    media: existing.media
+                        ? { ...existing.media, ...message.media }
+                        : message.media,
+                };
+                const next = [...state.messages];
+                next[idx] = merged;
+                return { messages: next };
+            }
+            return { messages: [...state.messages, message] };
+        });
+    },
+
+    updateMessageMedia: (transferId: string, updates: Partial<MediaAttachment>) => {
+        set((state) => ({
+            messages: state.messages.map((msg) =>
+                msg.media?.transferId === transferId
+                    ? { ...msg, media: { ...msg.media, ...updates } }
+                    : msg
+            ),
+        }));
     },
 
     setOnlineUsers: (users: string[]) => set({ onlineUsers: users }),

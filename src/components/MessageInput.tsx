@@ -1,13 +1,15 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
+import MediaAttachmentButton from "./MediaAttachmentButton";
 
 interface MessageInputProps {
     onSend: (text: string) => void;
+    onFileSelected: (file: File) => void;
     disabled?: boolean;
 }
 
-export default function MessageInput({ onSend, disabled }: MessageInputProps) {
+export default function MessageInput({ onSend, onFileSelected, disabled }: MessageInputProps) {
     const [text, setText] = useState("");
     const inputRef = useRef<HTMLInputElement>(null);
 
@@ -31,6 +33,10 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
     return (
         <div className="MessageInput border-t border-white/[0.08] px-4 py-3">
             <div className="flex items-center gap-3">
+                <MediaAttachmentButton
+                    onFileSelected={onFileSelected}
+                    disabled={disabled}
+                />
                 <input
                     ref={inputRef}
                     type="text"
