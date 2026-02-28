@@ -219,6 +219,7 @@ async function handleIncomingMessage(raw: Record<string, unknown>) {
                     totalChunks: data.totalChunks as number,
                     mediaType: data.mediaType as "image" | "video",
                     transferKey: data.transferKey as string,
+                    thumbnail: data.thumbnail as string | undefined,
                 };
             }
 

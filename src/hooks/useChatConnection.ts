@@ -100,6 +100,7 @@ export function useChatConnection(roomName: string) {
     }, [jwt, currentRoom?.channel, keysReady]);
 
     const addMessage = useChatStore((s) => s.addMessage);
+    const updateMessageMedia = useChatStore((s) => s.updateMessageMedia);
     const sendFileTransfer = useFileTransferStore((s) => s.sendFile);
 
     /** Gracefully leave the room: broadcast user_left, disconnect WS, reset state */
@@ -171,9 +172,10 @@ export function useChatConnection(roomName: string) {
                         encryptOutgoing(plaintext, sender) as Promise<Record<string, unknown> | null>
                     : null,
                 addMessage,
+                updateMessageMedia,
             );
         },
-        [sendFileTransfer, walletAddress, sendWsMessage, isEncryptionReady, encryptOutgoing, addMessage]
+        [sendFileTransfer, walletAddress, sendWsMessage, isEncryptionReady, encryptOutgoing, addMessage, updateMessageMedia]
     );
 
     return { connectionStatus, encryptionStatus, isEncryptionReady, isRoomFull, sendChatMessage, sendFile, exitRoom };

@@ -42,6 +42,8 @@ export interface FileTransferMeta {
     mediaType: MediaType;
     /** Base64-encoded raw AES-256 key — present only inside the encrypted payload. */
     transferKey: string;
+    /** Optional base64 data URL thumbnail for instant preview (images only). */
+    thumbnail?: string;
 }
 
 /** One chunk of the file. Encrypted with the per-transfer AES key. */
@@ -77,6 +79,8 @@ export interface FileTransfer {
     objectUrl?: string;
     transferKey?: CryptoKey;
     errorMessage?: string;
+    /** Set when `file_transfer_complete` arrives; reassembly deferred until all chunks decrypted. */
+    completionSignaled?: boolean;
 }
 
 // ─── ChatMessage media attachment ───
@@ -90,4 +94,6 @@ export interface MediaAttachment {
     status: TransferStatus;
     progress: number;
     objectUrl?: string;
+    /** Base64 data URL thumbnail for instant preview while receiving. */
+    thumbnailUrl?: string;
 }

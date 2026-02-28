@@ -33,6 +33,7 @@ interface FileTransferActions {
         sendWsMessage: (action: string, payload: Record<string, unknown>) => void,
         encryptOutgoing: ((plaintext: string, senderAddress: string) => Promise<Record<string, unknown> | null>) | null,
         addChatMessage: (msg: ChatMessage) => void,
+        updateMessageMedia: (transferId: string, updates: Partial<MediaAttachment>) => void,
     ) => Promise<void>;
 
     /** Handle an incoming `file_transfer_start` message (metadata). */
@@ -73,7 +74,7 @@ export const useFileTransferStore = create<FileTransferStore>()((set, get) => ({
 
     // ─── Sending ───
 
-    sendFile: async (file, senderAddress, sendWsMessage, encryptOutgoing, addChatMessage) => {
+    sendFile: async (file, senderAddress, sendWsMessage, encryptOutgoing, addChatMessage, updateMessageMedia) => {
         const mediaType = resolveMediaType(file.type);
         if (!mediaType) {
             console.warn("[file-transfer] Unsupported file type:", file.type);
@@ -120,21 +121,31 @@ export const useFileTransferStore = create<FileTransferStore>()((set, get) => ({
                     status: "sending",
                     progress: 0,
                     objectUrl,
+                    thumbnailUrl: meta.thumbnail,
                 } satisfies MediaAttachment,
             });
 
-            // 4. Send metadata (encrypted via ratchet if available)
+            // 4. Send metadata (encrypted via ratchet if available, plaintext fallback)
             const metaPayload = JSON.stringify(meta);
+            let metaSent = false;
+
             if (encryptOutgoing) {
-                const encrypted = await encryptOutgoing(metaPayload, senderAddress);
-                if (encrypted) {
-                    sendWsMessage("broadcastToChannel", {
-                        ...encrypted,
-                        sender: senderAddress,
-                        type: "file_transfer_start",
-                    });
+                try {
+                    const encrypted = await encryptOutgoing(metaPayload, senderAddress);
+                    if (encrypted) {
+                        sendWsMessage("broadcastToChannel", {
+                            ...encrypted,
+                            sender: senderAddress,
+                            type: "file_transfer_start",
+                        });
+                        metaSent = true;
+                    }
+                } catch (err) {
+                    console.warn("[file-transfer] Metadata encryption failed, falling back to plaintext:", err);
                 }
-            } else {
+            }
+
+            if (!metaSent) {
                 // Plaintext fallback
                 sendWsMessage("broadcastToChannel", {
                     ...meta,
@@ -157,6 +168,7 @@ export const useFileTransferStore = create<FileTransferStore>()((set, get) => ({
                 // Update local progress
                 const progress = Math.round(((i + 1) / encryptedChunks.length) * 100);
                 updateTransferProgress(set, meta.transferId, progress);
+                updateMessageMedia(meta.transferId, { progress });
             }
 
             // 6. Send completion signal
@@ -177,6 +189,8 @@ export const useFileTransferStore = create<FileTransferStore>()((set, get) => ({
                     },
                 };
             });
+
+            updateMessageMedia(meta.transferId, { status: "complete", progress: 100 });
         } catch (err) {
             console.error("[file-transfer] Send failed:", err);
         }
@@ -217,6 +231,7 @@ export const useFileTransferStore = create<FileTransferStore>()((set, get) => ({
                     mediaType: meta.mediaType,
                     status: "receiving",
                     progress: 0,
+                    thumbnailUrl: meta.thumbnail,
                 } satisfies MediaAttachment,
             });
         } catch (err) {
@@ -230,17 +245,22 @@ export const useFileTransferStore = create<FileTransferStore>()((set, get) => ({
 
         try {
             const decrypted = await decryptChunk(transfer.transferKey, ciphertext, iv);
-            const newChunks = new Map(transfer.chunks);
+
+            // Re-read from store — other chunks may have landed concurrently
+            const latest = get().transfers[transferId];
+            if (!latest) return;
+
+            const newChunks = new Map(latest.chunks);
             newChunks.set(chunkIndex, decrypted);
 
             const receivedCount = newChunks.size;
-            const progress = Math.round((receivedCount / transfer.meta.totalChunks) * 100);
+            const progress = Math.round((receivedCount / latest.meta.totalChunks) * 100);
 
             set((s) => ({
                 transfers: {
                     ...s.transfers,
                     [transferId]: {
-                        ...transfer,
+                        ...latest,
                         chunks: newChunks,
                         receivedCount,
                         progress,
@@ -249,6 +269,11 @@ export const useFileTransferStore = create<FileTransferStore>()((set, get) => ({
             }));
 
             updateMessageMedia(transferId, { progress });
+
+            // If completion was already signaled and this was the last missing chunk, finalize
+            if (latest.completionSignaled && receivedCount === latest.meta.totalChunks) {
+                await finalizeTransfer(get, set, transferId, updateMessageMedia);
+            }
         } catch (err) {
             console.error(`[file-transfer] Chunk ${chunkIndex} decrypt failed:`, err);
         }
@@ -258,41 +283,19 @@ export const useFileTransferStore = create<FileTransferStore>()((set, get) => ({
         const transfer = get().transfers[transferId];
         if (!transfer) return;
 
-        try {
-            // Reassemble all chunks into a blob
-            const buffer = reassembleChunks(transfer.chunks, transfer.meta.totalChunks);
-            const blob = new Blob([buffer], { type: transfer.meta.mimeType });
-            const objectUrl = URL.createObjectURL(blob);
+        // Mark that the sender has finished transmitting
+        set((s) => ({
+            transfers: {
+                ...s.transfers,
+                [transferId]: { ...transfer, completionSignaled: true },
+            },
+        }));
 
-            set((s) => ({
-                transfers: {
-                    ...s.transfers,
-                    [transferId]: {
-                        ...transfer,
-                        status: "complete",
-                        progress: 100,
-                        objectUrl,
-                    },
-                },
-            }));
-
-            updateMessageMedia(transferId, {
-                status: "complete",
-                progress: 100,
-                objectUrl,
-            });
-        } catch (err) {
-            console.error("[file-transfer] Reassembly failed:", err);
-
-            set((s) => ({
-                transfers: {
-                    ...s.transfers,
-                    [transferId]: { ...transfer, status: "error", errorMessage: String(err) },
-                },
-            }));
-
-            updateMessageMedia(transferId, { status: "error" });
+        // If all chunks are already decrypted, finalize immediately
+        if (transfer.chunks.size === transfer.meta.totalChunks) {
+            await finalizeTransfer(get, set, transferId, updateMessageMedia);
         }
+        // Otherwise, handleTransferChunk will finalize when the last chunk lands
     },
 
     removeTransfer: (transferId) => {
@@ -317,6 +320,53 @@ export const useFileTransferStore = create<FileTransferStore>()((set, get) => ({
 }));
 
 // ─── Helpers ───
+
+/** Reassemble all chunks, create blob URL, and update both store + chat message. */
+async function finalizeTransfer(
+    get: () => FileTransferState,
+    set: (fn: (s: FileTransferState) => Partial<FileTransferState>) => void,
+    transferId: string,
+    updateMessageMedia: (transferId: string, updates: Partial<MediaAttachment>) => void,
+) {
+    const transfer = get().transfers[transferId];
+    if (!transfer || transfer.status === "complete") return;
+
+    try {
+        const buffer = reassembleChunks(transfer.chunks, transfer.meta.totalChunks);
+        const blob = new Blob([buffer], { type: transfer.meta.mimeType });
+        const objectUrl = URL.createObjectURL(blob);
+
+        set((s) => ({
+            transfers: {
+                ...s.transfers,
+                [transferId]: {
+                    ...transfer,
+                    status: "complete",
+                    progress: 100,
+                    objectUrl,
+                },
+            },
+        }));
+
+        updateMessageMedia(transferId, {
+            status: "complete",
+            progress: 100,
+            objectUrl,
+        });
+    } catch (err) {
+        console.error("[file-transfer] Reassembly failed:", err);
+
+        set((s) => ({
+            transfers: {
+                ...s.transfers,
+                [transferId]: { ...transfer, status: "error", errorMessage: String(err) },
+            },
+        }));
+
+        updateMessageMedia(transferId, { status: "error" });
+    }
+}
+
 
 function resolveMediaType(mimeType: string): "image" | "video" | null {
     if ((SUPPORTED_IMAGE_TYPES as readonly string[]).includes(mimeType)) return "image";

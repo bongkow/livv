@@ -50,7 +50,24 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     currentRoom: null,
 
     addMessage: (message: ChatMessage) => {
-        set((state) => ({ messages: [...state.messages, message] }));
+        set((state) => {
+            const idx = state.messages.findIndex((m) => m.id === message.id);
+            if (idx >= 0) {
+                // Upsert: merge into existing message, preserving fields like objectUrl
+                const existing = state.messages[idx];
+                const merged: ChatMessage = {
+                    ...existing,
+                    ...message,
+                    media: existing.media
+                        ? { ...existing.media, ...message.media }
+                        : message.media,
+                };
+                const next = [...state.messages];
+                next[idx] = merged;
+                return { messages: next };
+            }
+            return { messages: [...state.messages, message] };
+        });
     },
 
     updateMessageMedia: (transferId: string, updates: Partial<MediaAttachment>) => {

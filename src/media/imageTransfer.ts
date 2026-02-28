@@ -16,6 +16,7 @@ import {
     exportTransferKey,
     encryptChunk,
 } from "./transferEncryption";
+import { generateThumbnail } from "./thumbnail";
 
 // ─── Validation ───
 
@@ -50,6 +51,14 @@ export async function prepareImageTransfer(
     const error = validateImageFile(file);
     if (error) throw new Error(error);
 
+    // Generate thumbnail for instant receiver preview (non-blocking on failure)
+    let thumbnail: string | undefined;
+    try {
+        thumbnail = await generateThumbnail(file);
+    } catch (err) {
+        console.warn("[image-transfer] Thumbnail generation failed, skipping:", err);
+    }
+
     const buffer = await file.arrayBuffer();
     const rawChunks = splitIntoChunks(buffer);
     const transferKey = await generateTransferKey();
@@ -63,6 +72,7 @@ export async function prepareImageTransfer(
         totalChunks: rawChunks.length,
         mediaType: "image",
         transferKey: transferKeyB64,
+        thumbnail,
     };
 
     // Encrypt chunks

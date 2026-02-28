@@ -7,7 +7,7 @@ interface MediaMessageProps {
 }
 
 export default function MediaMessage({ media }: MediaMessageProps) {
-    const { mediaType, status, progress, objectUrl, fileName, fileSize } = media;
+    const { mediaType, status, progress, objectUrl, thumbnailUrl, fileName, fileSize } = media;
 
     return (
         <div className="MediaMessage flex flex-col gap-1.5 max-w-xs">
@@ -19,6 +19,11 @@ export default function MediaMessage({ media }: MediaMessageProps) {
                             src={objectUrl}
                             alt={fileName}
                             className="block max-w-full max-h-64 object-contain"
+                            onError={(e) => {
+                                if (thumbnailUrl && (e.target as HTMLImageElement).src !== thumbnailUrl) {
+                                    (e.target as HTMLImageElement).src = thumbnailUrl;
+                                }
+                            }}
                         />
                     ) : (
                         <video
@@ -28,6 +33,15 @@ export default function MediaMessage({ media }: MediaMessageProps) {
                             className="block max-w-full max-h-64"
                         />
                     )
+                ) : thumbnailUrl && mediaType === "image" ? (
+                    /* Blurred thumbnail preview while receiving */
+                    <div className="relative h-40 w-full">
+                        <img
+                            src={thumbnailUrl}
+                            alt={`${fileName} preview`}
+                            className="block w-full h-full object-cover blur-sm scale-105 opacity-60"
+                        />
+                    </div>
                 ) : (
                     /* Placeholder while receiving */
                     <div className="flex items-center justify-center h-32 w-full">
@@ -60,16 +74,46 @@ export default function MediaMessage({ media }: MediaMessageProps) {
                 )}
             </div>
 
-            {/* File info */}
+            {/* File info + download */}
             <div className="flex items-center gap-2 text-[10px] text-white/30">
                 <span className="truncate">{fileName}</span>
                 <span className="shrink-0">{formatFileSize(fileSize)}</span>
+                {status === "complete" && objectUrl && (
+                    <a
+                        href={objectUrl}
+                        download={fileName}
+                        className="shrink-0 ml-auto text-white/50 hover:text-white transition-colors"
+                        title={`Save to Downloads`}
+                    >
+                        <DownloadIcon />
+                    </a>
+                )}
             </div>
         </div>
     );
 }
 
 // ─── Sub-components ───
+
+function DownloadIcon() {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+        </svg>
+    );
+}
 
 function PlaceholderIcon({ mediaType }: { mediaType: "image" | "video" }) {
     if (mediaType === "image") {
