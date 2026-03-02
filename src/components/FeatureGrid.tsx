@@ -1,3 +1,10 @@
+/*
+ * @Module: FeatureGrid
+ * @Purpose: Display core product features as glassmorphism cards
+ * @Logic: Maps FEATURES array to styled cards with staggered entrance animation
+ * @Interfaces: default export FeatureGrid
+ * @Constraints: No state, no side effects. Icons are inline SVGs.
+ */
 "use client";
 
 const FEATURES = [
@@ -24,13 +31,14 @@ const FEATURES = [
 export default function FeatureGrid() {
     return (
         <section className="FeatureGrid px-5 py-10">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-px">
-                {FEATURES.map((feature) => (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
+                {FEATURES.map((feature, i) => (
                     <div
                         key={feature.title}
-                        className="group border border-white/[0.08] p-6 space-y-3 transition-colors duration-200 hover:border-white/20"
+                        className="animate-fade-in-up group bg-white/[0.03] rounded-xl p-6 space-y-3 transition-all duration-300 hover:bg-white/[0.06] hover:backdrop-blur-sm"
+                        style={{ "--delay": `${100 + i * 80}ms` } as React.CSSProperties}
                     >
-                        <div className="text-white/30 group-hover:text-white/50 transition-colors duration-200">
+                        <div className="text-emerald-400/40 group-hover:text-emerald-400/60 transition-colors duration-300">
                             {feature.icon}
                         </div>
                         <h3 className="text-sm font-medium text-white/70">
@@ -46,13 +54,13 @@ export default function FeatureGrid() {
     );
 }
 
-/* ─── Inline SVG Icons (no external libs) ─── */
+/* ─── Inline SVG Icons ─── */
 
 function LockIcon() {
     return (
         <svg
-            width="20"
-            height="20"
+            width="28"
+            height="28"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -69,8 +77,8 @@ function LockIcon() {
 function WalletIcon() {
     return (
         <svg
-            width="20"
-            height="20"
+            width="28"
+            height="28"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -88,8 +96,8 @@ function WalletIcon() {
 function EphemeralIcon() {
     return (
         <svg
-            width="20"
-            height="20"
+            width="28"
+            height="28"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
