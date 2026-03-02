@@ -12,6 +12,7 @@ import Link from "next/link";
 import ConnectWalletButton from "@/components/ConnectWalletButton";
 import HeroSection from "@/components/HeroSection";
 import FeatureGrid from "@/components/FeatureGrid";
+import AppLogo from "@/components/AppLogo";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { appConfig } from "@/config/appConfig";
 
@@ -37,6 +38,7 @@ export default function LandingPage() {
       {/* Header */}
       <header className="flex items-center justify-between border-b border-white/[0.08] backdrop-blur-md bg-black/50 px-5 py-4">
         <div className="flex items-center gap-3">
+          <AppLogo size={24} />
           <h1 className="text-base font-light tracking-wide text-white/80">livv</h1>
           <span className="text-[10px] text-white/20 font-mono">v{appConfig.appVersion}</span>
         </div>

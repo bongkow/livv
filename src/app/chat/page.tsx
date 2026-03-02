@@ -6,6 +6,7 @@ import { useAuthStore } from "@/stores/useAuthStore";
 import { appConfig } from "@/config/appConfig";
 import ChatRoom from "@/components/ChatRoom";
 import ConnectWalletButton from "@/components/ConnectWalletButton";
+import AppLogo from "@/components/AppLogo";
 
 const DEFAULT_ROOM = "general";
 
@@ -35,6 +36,7 @@ function ChatPageContent() {
             {/* Header */}
             <header className="flex items-center justify-between border-b border-white/[0.08] px-5 py-3">
                 <div className="flex items-center gap-4">
+                    <AppLogo size={22} />
                     <button
                         onClick={() => router.push("/")}
                         className="text-sm font-medium text-white/80"

@@ -13,6 +13,7 @@ import ConnectWalletButton from "@/components/ConnectWalletButton";
 import RoomGrid from "@/components/RoomGrid";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { appConfig } from "@/config/appConfig";
+import AppLogo from "@/components/AppLogo";
 
 export default function RoomsPage() {
     const isConnected = useAuthStore((s) => s.isConnected);
@@ -41,6 +42,7 @@ export default function RoomsPage() {
             {/* Header */}
             <header className="flex items-center justify-between border-b border-white/[0.08] backdrop-blur-md bg-black/50 px-5 py-4">
                 <div className="flex items-center gap-4">
+                    <AppLogo size={24} />
                     <button
                         onClick={() => router.push("/")}
                         className="text-base font-light tracking-wide text-white/80 hover:text-white transition-colors"
