@@ -19,7 +19,7 @@ body::before {
   background-size: 128px 128px;
 }
 
-body > * {
+body>* {
   position: relative;
   z-index: 1;
 }
@@ -30,6 +30,7 @@ body > * {
     opacity: 0;
     transform: translateY(12px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
