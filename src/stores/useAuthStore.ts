@@ -99,12 +99,16 @@ export const useAuthStore = create<AuthStore>()(
                         isAuthenticating: false,
                     });
                 } catch (error: unknown) {
-                    const message =
-                        error instanceof Error ? error.message : "Failed to connect wallet";
-                    set({
-                        isAuthenticating: false,
-                        errorMessage: message,
-                    });
+                    // MetaMask user rejection (EIP-1193 code 4001 / ethers ACTION_REJECTED)
+                    const isRejection =
+                        (error as { code?: number | string }).code === 4001 ||
+                        (error as { code?: string }).code === "ACTION_REJECTED";
+
+                    const message = isRejection
+                        ? "You rejected the sign-in request."
+                        : "Failed to connect wallet.";
+
+                    set({ isAuthenticating: false, errorMessage: message });
                 }
             },
 
