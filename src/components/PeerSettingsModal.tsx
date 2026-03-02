@@ -12,7 +12,7 @@ import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { truncateAddress } from "@/utils/truncateAddress";
-import FaceAvatar from "./FaceAvatar";
+import FullBodyAvatar from "./FullBodyAvatar";
 import TokenTab from "./TokenTab";
 
 // ─── Tab registry (extensible) ───
@@ -76,7 +76,7 @@ export default function PeerSettingsModal({
             >
                 {/* Left avatar column — 1/4 width */}
                 <div className="flex flex-col items-center justify-center gap-3 w-1/4 bg-white/[0.02] border-r border-white/[0.08] py-8 px-3">
-                    <FaceAvatar address={walletAddress} size={80} />
+                    <FullBodyAvatar address={walletAddress} size={200} />
                     <span className="text-[10px] text-white/30 font-mono text-center break-all leading-relaxed">
                         {truncateAddress(walletAddress)}
                     </span>
