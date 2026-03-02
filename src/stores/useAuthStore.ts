@@ -4,6 +4,7 @@ import { BrowserProvider } from "ethers";
 import { APP_NAME, appConfig } from "@/config/appConfig";
 import { isTokenExpired, getTokenAddress } from "@/utils/isTokenExpired";
 import { storeMasterSeed, hasMasterSeed } from "@/crypto/masterSeedStore";
+import { useSettingsStore } from "@/stores/useSettingsStore";
 
 interface AuthState {
     walletAddress: string;
@@ -62,7 +63,7 @@ export const useAuthStore = create<AuthStore>()(
                         {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ address, signature, message, application: APP_NAME, expirationInHour: appConfig.tokenExpirationHour }),
+                            body: JSON.stringify({ address, signature, message, application: APP_NAME, expirationInHour: useSettingsStore.getState().tokenExpirationHour }),
                         }
                     );
 

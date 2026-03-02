@@ -1,13 +1,19 @@
 "use client";
 
+import { useState } from "react";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useWebSocketStore } from "@/stores/useWebSocketStore";
 import { truncateAddress } from "@/utils/truncateAddress";
+import FaceAvatar from "./FaceAvatar";
+import PeerSettingsModal from "./PeerSettingsModal";
 
-const WS_STATUS_STYLES: Record<string, string> = {
-    connected: "bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.6)]",
-    connecting: "bg-yellow-400 shadow-[0_0_6px_rgba(250,204,21,0.6)] animate-pulse",
-    disconnected: "bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]",
+const WS_RING_STYLES: Record<string, string> = {
+    connected:
+        "ring-2 ring-green-400 shadow-[0_0_8px_rgba(34,197,94,0.6),0_0_20px_rgba(34,197,94,0.25)]",
+    connecting:
+        "ring-2 ring-yellow-400 shadow-[0_0_8px_rgba(250,204,21,0.6),0_0_20px_rgba(250,204,21,0.25)] animate-pulse",
+    disconnected:
+        "ring-2 ring-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6),0_0_20px_rgba(239,68,68,0.25)]",
 };
 
 const WS_STATUS_LABELS: Record<string, string> = {
@@ -20,24 +26,34 @@ export default function ConnectWalletButton() {
     const { isConnected, isAuthenticating, walletAddress, errorMessage, connectAndSignIn, signOut } =
         useAuthStore();
     const connectionStatus = useWebSocketStore((s) => s.connectionStatus);
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
     if (isConnected) {
         return (
-            <div className="flex items-center gap-3">
-                <span
-                    title={WS_STATUS_LABELS[connectionStatus]}
-                    className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${WS_STATUS_STYLES[connectionStatus]}`}
+            <>
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => setIsSettingsOpen(true)}
+                        title={WS_STATUS_LABELS[connectionStatus]}
+                        className={`inline-flex rounded-full shrink-0 transition-shadow duration-300 cursor-pointer ${WS_RING_STYLES[connectionStatus]}`}
+                    >
+                        <FaceAvatar address={walletAddress} size={36} />
+                    </button>
+                    <span className="text-sm text-white/50 font-mono">
+                        {truncateAddress(walletAddress)}
+                    </span>
+                    <button
+                        onClick={signOut}
+                        className="text-xs text-white/30 hover:text-white transition-colors"
+                    >
+                        disconnect
+                    </button>
+                </div>
+                <PeerSettingsModal
+                    isOpen={isSettingsOpen}
+                    onClose={() => setIsSettingsOpen(false)}
                 />
-                <span className="text-sm text-white/50 font-mono">
-                    {truncateAddress(walletAddress)}
-                </span>
-                <button
-                    onClick={signOut}
-                    className="text-xs text-white/30 hover:text-white transition-colors"
-                >
-                    disconnect
-                </button>
-            </div>
+            </>
         );
     }
 

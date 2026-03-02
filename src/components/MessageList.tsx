@@ -4,6 +4,7 @@ import { useRef, useEffect } from "react";
 import { useChatStore, type ChatMessage } from "@/stores/useChatStore";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { truncateAddress } from "@/utils/truncateAddress";
+import FaceAvatar from "./FaceAvatar";
 import MediaMessage from "./MediaMessage";
 
 export default function MessageList() {
@@ -42,9 +43,12 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         <div className={`flex ${isSelf ? "justify-end" : "justify-start"}`}>
             <div className={`max-w-[70%] ${isSelf ? "text-right" : "text-left"}`}>
                 {!isSelf && (
-                    <p className="text-[11px] text-white/30 font-mono mb-0.5">
-                        {truncateAddress(message.sender)}
-                    </p>
+                    <div className="flex items-center gap-1 mb-0.5">
+                        <FaceAvatar address={message.sender} size={14} />
+                        <span className="text-[11px] text-white/30 font-mono">
+                            {truncateAddress(message.sender)}
+                        </span>
+                    </div>
                 )}
                 {message.media ? (
                     <MediaMessage media={message.media} />

@@ -10,6 +10,7 @@
 import type { RoomData } from "@/app/actions/fetchRoom";
 import { deriveRoomType } from "@/stores/useChatStore";
 import { truncateAddress } from "@/utils/truncateAddress";
+import FaceAvatar from "./FaceAvatar";
 
 interface RoomCardProps {
     room: RoomData;
@@ -34,8 +35,8 @@ export default function RoomCard({ room, isSignedIn, onEnter }: RoomCardProps) {
                         0/{room.maxPeersPerRoom ?? 2}
                     </span>
                 </div>
-                <span className="text-[11px] text-white/25">
-                    led by {truncateAddress(room.leader)}
+                <span className="text-[11px] text-white/25 inline-flex items-center gap-1">
+                    led by <FaceAvatar address={room.leader} size={12} /> {truncateAddress(room.leader)}
                 </span>
             </div>
 

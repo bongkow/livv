@@ -64,3 +64,19 @@ export function getTokenAddress(token: string): string | null {
         return null;
     }
 }
+
+/**
+ * Extract token expiry and issued-at timestamps (in seconds).
+ * Returns null if the token is malformed or missing claims.
+ */
+export function getTokenExpiry(
+    token: string
+): { expiresAt: number; issuedAt: number } | null {
+    try {
+        const payload = decodeJwtPayload(token);
+        if (!payload.exp || !payload.iat) return null;
+        return { expiresAt: payload.exp, issuedAt: payload.iat };
+    } catch {
+        return null;
+    }
+}

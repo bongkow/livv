@@ -2,9 +2,14 @@
 
 import { useChatStore } from "@/stores/useChatStore";
 import { truncateAddress } from "@/utils/truncateAddress";
+import FaceAvatar from "./FaceAvatar";
 
 /**
- * this component list Peers in the room 
+ * @Module: PeersInRoom
+ * @Purpose: Lists peers currently in the chat room with face avatars
+ * @Logic: Reads onlineUsers from store, renders a PresenceBadge per peer
+ * @Interfaces: default export PeersInRoom
+ * @Constraints: No internal state — fully driven by useChatStore
  */
 export default function PeersInRoom() {
     const onlineUsers = useChatStore((s) => s.onlineUsers);
@@ -34,7 +39,7 @@ export default function PeersInRoom() {
 function PresenceBadge({ address }: { address: string }) {
     return (
         <div className="flex items-center gap-1.5 bg-white/[0.04] border border-white/[0.08] rounded-full px-2.5 py-1">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
+            <FaceAvatar address={address} size={14} />
             <span className="text-[11px] text-white/50 font-mono whitespace-nowrap">
                 {truncateAddress(address)}
             </span>

@@ -2,7 +2,7 @@
 
 Anonymous, end-to-end encrypted communication powered by Ethereum wallets.
 
-> **v0.1.0-beta** — actively under development
+> **v0.1.1-beta** — actively under development
 
 ## What is livv?
 
@@ -11,6 +11,8 @@ livv is a privacy-first chat platform where identity is your Ethereum address �
 - **No accounts, no emails** — sign in with MetaMask
 - **End-to-end encryption** — the server is a relay, not a reader
 - **Pseudonymous** — your wallet address is your only identity
+- **Face avatars** — each address generates a unique, deterministic human face
+- **Peer settings** — configurable token longevity with live countdown
 
 ## How It Works
 
@@ -39,6 +41,17 @@ All cryptographic operations run **entirely in the browser** using the Web Crypt
 - Presence system: `user_joined` / `i_am_here` / `user_left` broadcasts
 - Encryption public keys are piggy-backed on presence messages — no extra round trips
 
+### Face Avatar Identicons
+
+Each Ethereum address deterministically generates a unique SVG human face (skin tone, hair style/color, eyes, nose, mouth, eyebrows, accessories). Zero external dependencies — ~3.5 million unique combinations from address bytes.
+
+### Peer Settings
+
+Click the avatar to open a tabbed settings modal:
+
+- **Token tab** — configure auth token longevity (1–168 hours) and view a live HH:MM:SS countdown of the current token's remaining time
+- Avatar connection ring glows green (connected), yellow/pulse (connecting), or red (disconnected)
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -61,12 +74,15 @@ src/
 │   └── encryption/page.tsx # Encryption info page
 ├── components/             # UI components
 │   ├── ChatRoom.tsx        # Chat room layout + exit button
-│   ├── MessageList.tsx     # Message display
+│   ├── MessageList.tsx     # Message display (with face avatars)
 │   ├── MessageInput.tsx    # Compose bar
-│   ├── PeersInRoom.tsx     # Online presence sidebar
-│   ├── RoomCard.tsx        # Room card in grid
+│   ├── PeersInRoom.tsx     # Online presence sidebar (with face avatars)
+│   ├── RoomCard.tsx        # Room card in grid (with leader avatar)
 │   ├── RoomGrid.tsx        # Room listing
-│   └── ConnectWalletButton.tsx
+│   ├── ConnectWalletButton.tsx  # Wallet button + avatar + settings modal trigger
+│   ├── FaceAvatar.tsx      # Deterministic SVG face from address
+│   ├── PeerSettingsModal.tsx    # Tabbed settings modal (portal)
+│   └── TokenTab.tsx        # Token longevity + live countdown
 ├── crypto/                 # E2E encryption module
 │   ├── x3dh.ts             # X3DH key exchange (1:1)
 │   ├── doubleRatchet.ts    # Double Ratchet (1:1)
@@ -87,12 +103,14 @@ src/
 │   ├── useChatStore.ts         # Messages + online users
 │   ├── useEncryptionStore.ts   # Crypto state + protocol actions
 │   ├── useWebSocketStore.ts    # WebSocket connection
-│   └── useRoomsStore.ts        # Room list
+│   ├── useRoomsStore.ts        # Room list
+│   └── useSettingsStore.ts     # Persisted peer settings (token longevity)
 ├── config/
 │   └── appConfig.ts        # App-wide config
 └── utils/                  # Helpers
+    ├── faceAvatar.ts       # SVG face generator (~3.5M unique combos)
     ├── hashRoomName.ts
-    ├── isTokenExpired.ts
+    ├── isTokenExpired.ts   # JWT decode + expiry + getTokenExpiry
     └── truncateAddress.ts
 ```
 
@@ -132,6 +150,13 @@ yarn version:major   # 0.1.0 → 1.0.0
 | **Pseudonymity** | No PII — only Ethereum addresses |
 
 ## Changelog
+
+### 2026-03-02 — Face Avatars & Peer Settings
+
+- **Face avatar identicons**: Each Ethereum address deterministically generates a unique SVG human face. Displayed in presence badges, message bubbles, room cards, and the header bar. Zero external dependencies.
+- **Peer settings modal**: Click the avatar to open a tabbed settings panel. First tab: Token — configure auth token longevity (1–168h) with a live countdown timer showing remaining time.
+- **Connection ring**: WebSocket status indicator is now a glowing ring around the avatar (green/yellow/red) with luminous box-shadow effects.
+- **Settings persistence**: Token longevity preference persisted via `useSettingsStore` (Zustand + localStorage). Takes effect on next sign-in.
 
 ### 2026-02-27 — Security Hardening
 
