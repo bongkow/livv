@@ -18,6 +18,7 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline'",
               "connect-src 'self' wss://ws.bongkow.com https://api.bongkow.com",
               "img-src 'self' data:",
+              "media-src 'self' blob:",
               "font-src 'self'",
               "object-src 'none'",
               "frame-ancestors 'none'",
