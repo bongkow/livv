@@ -640,6 +640,16 @@
     "@babel/helper-string-parser" "^7.27.1"
     "@babel/helper-validator-identifier" "^7.28.5"
 
+"@babylonjs/core@^8.56.1":
+  version "8.56.1"
+  resolved "https://registry.yarnpkg.com/@babylonjs/core/-/core-8.56.1.tgz#82d551b9d219ced66326e2b5a19a7e616dd56ab3"
+  integrity sha512-oy/wnZifTdNnE4zMIyo8AKF7sYX/HpQjCbAuU18vDqwV4vyD73p0BKEfxsCR17G/p1zGAyaJgsw23gYvY1empg==
+
+"@babylonjs/loaders@^8.56.1":
+  version "8.56.1"
+  resolved "https://registry.yarnpkg.com/@babylonjs/loaders/-/loaders-8.56.1.tgz#2fd7c1fe9bb9a747f9d3cb1a72d3188e6f894848"
+  integrity sha512-10zdyCjg02XXOK2bNLjpNbT/I1mgaV9sw20cyb1CojEdUEji8SqqUY2Xw1VIlb8fud/0WYQceVNCK8zk9SKT4g==
+
 "@emnapi/core@^1.4.3", "@emnapi/core@^1.7.1", "@emnapi/core@^1.8.1":
   version "1.8.1"
   resolved "https://registry.yarnpkg.com/@emnapi/core/-/core-1.8.1.tgz#fd9efe721a616288345ffee17a1f26ac5dd01349"
