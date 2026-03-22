@@ -18,6 +18,8 @@ import {
 } from "@babylonjs/core";
 import { buildAvatar, buildAddressLabel } from "@/game/avatarBuilder";
 import type { AvatarRig } from "@/game/avatarBuilder";
+import { useGamePresenceStore } from "@/stores/useGamePresenceStore";
+import { useWebSocketStore } from "@/stores/useWebSocketStore";
 
 const AvatarDetailPanel = dynamic(() => import("@/components/AvatarDetailPanel"), {
     ssr: false,
@@ -25,11 +27,8 @@ const AvatarDetailPanel = dynamic(() => import("@/components/AvatarDetailPanel")
 
 // ─── Collision helpers ───
 
-interface Collider {
-    x: number;
-    z: number;
-    radius: number;
-}
+import type { Collider } from "@/game/worldBuilder";
+import { buildWorld, animateInsects } from "@/game/worldBuilder";
 
 const WORLD_HALF = 98; // world boundary (ground is 200×200, keep 2 units of margin)
 const PLAYER_RADIUS = 0.3;
@@ -46,62 +45,6 @@ function isPositionBlocked(x: number, z: number, colliders: Collider[]): boolean
         if (dx * dx + dz * dz < minDist * minDist) return true;
     }
     return false;
-}
-
-// ─── Ground with simple grid ───
-
-interface GroundBuildResult {
-    ground: Mesh;
-    colliders: Collider[];
-}
-
-function buildGround(scene: Scene): GroundBuildResult {
-    const ground = MeshBuilder.CreateGround(
-        "ground",
-        { width: 200, height: 200, subdivisions: 40 },
-        scene,
-    );
-    const mat = new StandardMaterial("groundMat", scene);
-    mat.diffuseColor = new Color3(0.28, 0.55, 0.22);
-    mat.specularColor = Color3.Black();
-    ground.material = mat;
-    ground.receiveShadows = true;
-
-    // Scatter a few simple trees and track their positions for collision
-    const treeMat = new StandardMaterial("treeTrunk", scene);
-    treeMat.diffuseColor = new Color3(0.4, 0.25, 0.13);
-    const leafMat = new StandardMaterial("treeLeaf", scene);
-    leafMat.diffuseColor = new Color3(0.15, 0.5, 0.15);
-
-    const colliders: Collider[] = [];
-    const TREE_COLLISION_RADIUS = 0.6; // slightly wider than trunk for leaf canopy
-
-    for (let i = 0; i < 30; i++) {
-        const x = (Math.random() - 0.5) * 160;
-        const z = (Math.random() - 0.5) * 160;
-        // Skip trees too close to spawn
-        if (Math.abs(x) < 6 && Math.abs(z) < 6) continue;
-
-        const trunk = MeshBuilder.CreateCylinder(
-            `trunk${i}`,
-            { height: 2, diameter: 0.4 },
-            scene,
-        );
-        trunk.position.set(x, 1, z);
-        trunk.material = treeMat;
-
-        const leaves = MeshBuilder.CreateSphere(
-            `leaves${i}`,
-            { diameter: 2.5 },
-            scene,
-        );
-        leaves.position.set(x, 2.8, z);
-        leaves.material = leafMat;
-
-        colliders.push({ x, z, radius: TREE_COLLISION_RADIUS });
-    }
-
-    return { ground, colliders };
 }
 
 // ─── Walk animation helper ───
@@ -140,6 +83,7 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
     const engineRef = useRef<Engine | null>(null);
     const coordRef = useRef<HTMLSpanElement>(null);
     const [showDetail, setShowDetail] = useState(false);
+    const [detailAddress, setDetailAddress] = useState("");
 
     const setup = useCallback(
         (canvas: HTMLCanvasElement) => {
@@ -180,16 +124,30 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             shadowGen.useBlurExponentialShadowMap = true;
 
             // ── World ──
-            const { colliders } = buildGround(scene);
+            const { colliders, insects } = buildWorld(scene);
+            let elapsedTime = 0;
 
             // ── Player ──
             const rig = buildAvatar(scene, walletAddress, shadowGen);
-            const labelMesh = buildAddressLabel(scene, rig.root, walletAddress);
+            const labelMesh = buildAddressLabel(scene, rig.root, walletAddress, true);
 
             // ── Make label clickable ──
             labelMesh.isPickable = true;
             scene.onPointerDown = (_evt, pickResult) => {
-                if (pickResult?.hit && pickResult.pickedMesh === labelMesh) {
+                if (pickResult?.hit && pickResult.pickedMesh?.name === "label") {
+                    // Determine whose label was clicked
+                    const clickedRoot = pickResult.pickedMesh.parent;
+                    if (clickedRoot === rig.root) {
+                        setDetailAddress(walletAddress);
+                    } else {
+                        // Find remote player by root reference
+                        for (const [addr, remote] of remoteAvatars) {
+                            if (remote.rig.root === clickedRoot) {
+                                setDetailAddress(addr);
+                                break;
+                            }
+                        }
+                    }
                     setShowDetail(true);
                 }
             };
@@ -200,6 +158,17 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             const WALK_CYCLE_SPEED = 8; // how fast the walk cycle plays
             let walkPhase = 0;
             let walkIntensity = 0; // lerps 0→1 when moving, 1→0 when stopping
+
+            // ── Remote avatar tracking ──
+            const remoteAvatars = new Map<string, {
+                rig: AvatarRig;
+                walkPhase: number;
+                walkIntensity: number;
+                prevX: number;
+                prevZ: number;
+            }>();
+            const BROADCAST_INTERVAL = 0.1; // seconds (~10Hz)
+            let positionBroadcastTimer = 0;
 
             const onKeyDown = (e: KeyboardEvent) => {
                 keys[e.key.toLowerCase()] = true;
@@ -268,12 +237,91 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 // Animate limbs (lerps back to standing when stopped)
                 animateWalkCycle(rig, walkPhase, walkIntensity);
 
+                // Animate insects
+                elapsedTime += dt;
+                animateInsects(insects, elapsedTime);
+
                 // Update coordinate display (direct DOM for perf)
                 if (coordRef.current) {
                     const px = rig.root.position.x.toFixed(1);
                     const py = rig.root.position.y.toFixed(1);
                     const pz = rig.root.position.z.toFixed(1);
                     coordRef.current.textContent = `X: ${px}  Y: ${py}  Z: ${pz}`;
+                }
+
+                // ── Broadcast local position (throttled ~10Hz) ──
+                positionBroadcastTimer += dt;
+                if (isMoving && positionBroadcastTimer >= BROADCAST_INTERVAL) {
+                    positionBroadcastTimer = 0;
+                    const wsStore = useWebSocketStore.getState();
+                    wsStore.sendMessage("broadcastToChannel", {
+                        type: "position",
+                        x: rig.root.position.x,
+                        z: rig.root.position.z,
+                        rotY: rig.root.rotation.y,
+                    });
+                }
+
+                // ── Remote avatars: spawn / despawn / lerp ──
+                const presenceStore = useGamePresenceStore.getState();
+                const remotePlayers = presenceStore.remotePlayers;
+
+                // Spawn new remote avatars
+                for (const [addr, player] of remotePlayers) {
+                    if (remoteAvatars.has(addr)) continue;
+
+                    const remoteRig = buildAvatar(scene, player.address, shadowGen);
+                    const remoteLabelMesh = buildAddressLabel(scene, remoteRig.root, player.address);
+                    remoteLabelMesh.isPickable = true;
+                    remoteRig.root.position.x = player.x;
+                    remoteRig.root.position.z = player.z;
+                    remoteRig.root.rotation.y = player.rotY;
+                    remoteAvatars.set(addr, {
+                        rig: remoteRig,
+                        walkPhase: 0,
+                        walkIntensity: 0,
+                        prevX: player.x,
+                        prevZ: player.z,
+                    });
+                }
+
+                // Despawn removed remote avatars
+                for (const [addr, remote] of remoteAvatars) {
+                    if (!remotePlayers.has(addr)) {
+                        remote.rig.root.dispose();
+                        remoteAvatars.delete(addr);
+                    }
+                }
+
+                // Lerp existing remote avatars toward their targets
+                const LERP_SPEED = 8; // units / second interpolation factor
+                for (const [addr, remote] of remoteAvatars) {
+                    const playerData = remotePlayers.get(addr);
+                    if (!playerData) continue;
+
+                    const lerpFactor = Math.min(1, dt * LERP_SPEED);
+                    const oldX = remote.rig.root.position.x;
+                    const oldZ = remote.rig.root.position.z;
+
+                    remote.rig.root.position.x += (playerData.targetX - oldX) * lerpFactor;
+                    remote.rig.root.position.z += (playerData.targetZ - oldZ) * lerpFactor;
+                    remote.rig.root.rotation.y += (playerData.targetRotY - remote.rig.root.rotation.y) * lerpFactor;
+
+                    // Detect movement for walk animation
+                    const dx = remote.rig.root.position.x - remote.prevX;
+                    const dz = remote.rig.root.position.z - remote.prevZ;
+                    const remoteIsMoving = (dx * dx + dz * dz) > 0.00001;
+
+                    if (remoteIsMoving) {
+                        remote.walkPhase += WALK_CYCLE_SPEED * dt;
+                        remote.walkIntensity = Math.min(1, remote.walkIntensity + dt * 6);
+                    } else {
+                        remote.walkIntensity = Math.max(0, remote.walkIntensity - dt * 6);
+                    }
+                    animateWalkCycle(remote.rig, remote.walkPhase, remote.walkIntensity);
+
+                    remote.prevX = remote.rig.root.position.x;
+                    remote.prevZ = remote.rig.root.position.z;
                 }
             });
 
@@ -287,6 +335,11 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 window.removeEventListener("keydown", onKeyDown);
                 window.removeEventListener("keyup", onKeyUp);
                 window.removeEventListener("resize", onResize);
+                // Clean up remote avatars
+                for (const [, remote] of remoteAvatars) {
+                    remote.rig.root.dispose();
+                }
+                remoteAvatars.clear();
                 scene.dispose();
                 engine.dispose();
                 engineRef.current = null;
@@ -311,9 +364,9 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             <div className="absolute bottom-4 left-4 rounded bg-black/60 px-3 py-1.5 font-mono text-xs text-white/80 backdrop-blur-sm">
                 <span ref={coordRef}>X: 0.0  Y: 0.0  Z: 0.0</span>
             </div>
-            {showDetail && (
+            {showDetail && detailAddress && (
                 <AvatarDetailPanel
-                    address={walletAddress}
+                    address={detailAddress}
                     onClose={() => setShowDetail(false)}
                 />
             )}

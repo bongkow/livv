@@ -3,6 +3,7 @@ import { appConfig } from "@/config/appConfig";
 import { useChatStore } from "./useChatStore";
 import { useEncryptionStore } from "./useEncryptionStore";
 import { useFileTransferStore } from "./useFileTransferStore";
+import { useGamePresenceStore } from "./useGamePresenceStore";
 import type { FileTransferMeta } from "@/media/types";
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected";
@@ -266,12 +267,21 @@ async function handleIncomingMessage(raw: Record<string, unknown>) {
             const peerAddress = data.address as string;
             chatStore.addOnlineUser(peerAddress);
 
+            // Spawn remote player in game world
+            const gamePresence = useGamePresenceStore.getState();
+            gamePresence.addRemotePlayer(
+                peerAddress,
+                (data.x as number) ?? 0,
+                (data.z as number) ?? 0,
+                (data.rotY as number) ?? 0,
+            );
+
             // Store peer's public key if included in the presence message
             if (data.publicKey) {
                 await encryptionStore.addPeerPublicKey(peerAddress, data.publicKey as JsonWebKey);
             }
 
-            // Reply so the joiner discovers us (include our public key)
+            // Reply so the joiner discovers us (include our public key + position)
             const { useAuthStore: AuthStore } = await import("./useAuthStore");
             const myAddr = AuthStore.getState().walletAddress;
             if (myAddr && peerAddress.toLowerCase() !== myAddr.toLowerCase()) {
@@ -290,6 +300,29 @@ async function handleIncomingMessage(raw: Record<string, unknown>) {
             const peerAddr = data.address as string;
             chatStore.addOnlineUser(peerAddr);
 
+            // Spawn remote player in game world (returns early if already tracked)
+            const gamePresenceIAH = useGamePresenceStore.getState();
+            const alreadyKnown = gamePresenceIAH.remotePlayers.has(peerAddr.toLowerCase());
+            gamePresenceIAH.addRemotePlayer(
+                peerAddr,
+                (data.x as number) ?? 0,
+                (data.z as number) ?? 0,
+                (data.rotY as number) ?? 0,
+            );
+
+            // Reply so the sender discovers us too (only for new players to avoid loops)
+            if (!alreadyKnown) {
+                const { useAuthStore: AuthIAH } = await import("./useAuthStore");
+                const myAddrIAH = AuthIAH.getState().walletAddress;
+                if (myAddrIAH && peerAddr.toLowerCase() !== myAddrIAH.toLowerCase()) {
+                    const wsStore = useWebSocketStore.getState();
+                    wsStore.sendMessage("broadcastToChannel", {
+                        type: "i_am_here",
+                        address: myAddrIAH,
+                    });
+                }
+            }
+
             // Store peer's public key if included in the presence message
             if (data.publicKey) {
                 await encryptionStore.addPeerPublicKey(peerAddr, data.publicKey as JsonWebKey);
@@ -297,9 +330,23 @@ async function handleIncomingMessage(raw: Record<string, unknown>) {
             break;
         }
 
-        case "user_left":
-            chatStore.removeOnlineUser(data.address as string);
+        case "user_left": {
+            const leftAddr = data.address as string;
+            chatStore.removeOnlineUser(leftAddr);
+            useGamePresenceStore.getState().removeRemotePlayer(leftAddr);
             break;
+        }
+
+        case "position": {
+            const posAddr = (data.sender as string) || (data.address as string) || "";
+            useGamePresenceStore.getState().updateRemotePosition(
+                posAddr,
+                data.x as number,
+                data.z as number,
+                data.rotY as number,
+            );
+            break;
+        }
 
         case "peers":
             chatStore.setOnlineUsers(data.peers as string[]);

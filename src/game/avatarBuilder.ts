@@ -523,6 +523,7 @@ export function buildAddressLabel(
     scene: Scene,
     parent: TransformNode,
     address: string,
+    isSelf = false,
 ): Mesh {
     const label = truncateAddress(address);
     const plane = MeshBuilder.CreatePlane("label", { width: 2, height: 0.3 }, scene);
@@ -541,9 +542,9 @@ export function buildAddressLabel(
     labelCtx.roundRect(8, 8, 496, 48, 24);
     labelCtx.fill();
 
-    // Text
+    // Text — red for self, white for others
     labelCtx.font = "bold 28px monospace";
-    labelCtx.fillStyle = "#ffffff";
+    labelCtx.fillStyle = isSelf ? "#ff4444" : "#ffffff";
     labelCtx.textAlign = "center";
     labelCtx.textBaseline = "middle";
     labelCtx.fillText(label, 256, 32);

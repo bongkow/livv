@@ -28,12 +28,12 @@ export default function HeroSection() {
     const walletAddress = useAuthStore((s) => s.walletAddress);
     const router = useRouter();
 
-    const handleBrowseRooms = () => {
+    const handleAuthenticatedNavigation = (path: string) => {
         if (isConnected) {
-            router.push("/rooms");
+            router.push(path);
         } else {
             alert(
-                "To see the rooms, you need to sign in with your Ethereum wallet. It's completely free!"
+                "You need to sign in with your Ethereum wallet first. It's completely free!"
             );
         }
     };
@@ -59,12 +59,20 @@ export default function HeroSection() {
                         </p>
 
                         {/* CTA */}
-                        <button
-                            onClick={handleBrowseRooms}
-                            className="border border-white/20 px-8 py-3 text-sm font-medium text-white hover:bg-white hover:text-black transition-all duration-200 rounded cursor-pointer"
-                        >
-                            Browse Rooms →
-                        </button>
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => handleAuthenticatedNavigation("/rooms")}
+                                className="border border-white/20 px-8 py-3 text-sm font-medium text-white hover:bg-white hover:text-black transition-all duration-200 rounded cursor-pointer"
+                            >
+                                Browse Rooms →
+                            </button>
+                            <button
+                                onClick={() => handleAuthenticatedNavigation("/open-world")}
+                                className="border border-white/20 px-8 py-3 text-sm font-medium text-white hover:bg-white hover:text-black transition-all duration-200 rounded cursor-pointer"
+                            >
+                                Open World →
+                            </button>
+                        </div>
                     </div>
 
                     {/* Avatar — appears when peer signs in */}
