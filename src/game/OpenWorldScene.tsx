@@ -202,8 +202,12 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 prevX: number;
                 prevZ: number;
             }>();
-            const BROADCAST_INTERVAL = 0.1; // seconds (~10Hz)
+            const BROADCAST_INTERVAL = 0.05; // seconds (~20Hz)
             let positionBroadcastTimer = 0;
+            let lastBroadcastX = 0;
+            let lastBroadcastZ = 0;
+            let lastBroadcastTime = 0;
+            let wasBroadcasting = false;
 
             // ── First-person / Third-person toggle ──
             let isFirstPerson = false;
@@ -333,13 +337,25 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     coordRef.current.textContent = `X: ${px}  Y: ${py}  Z: ${pz}`;
                 }
 
-                // ── Broadcast local position (throttled ~10Hz) ──
+                // ── Broadcast local position (throttled ~20Hz) ──
                 positionBroadcastTimer += dt;
-                if (isMoving && positionBroadcastTimer >= BROADCAST_INTERVAL) {
+                const shouldBroadcast = isMoving && positionBroadcastTimer >= BROADCAST_INTERVAL;
+                const shouldSendStop = !isMoving && wasBroadcasting;
+
+                if (shouldBroadcast || shouldSendStop) {
                     positionBroadcastTimer = 0;
                     const px = rig.root.position.x;
                     const pz = rig.root.position.z;
                     const pRotY = rig.root.rotation.y;
+
+                    // Compute velocity (units/sec)
+                    const now = performance.now() / 1000;
+                    const elapsed = lastBroadcastTime > 0 ? now - lastBroadcastTime : BROADCAST_INTERVAL;
+                    const vx = elapsed > 0 ? (px - lastBroadcastX) / elapsed : 0;
+                    const vz = elapsed > 0 ? (pz - lastBroadcastZ) / elapsed : 0;
+                    lastBroadcastX = px;
+                    lastBroadcastZ = pz;
+                    lastBroadcastTime = now;
 
                     // Save locally so i_am_here replies include our position
                     useGamePresenceStore.getState().setLocalPosition(px, pz, pRotY);
@@ -358,8 +374,11 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                         x: px,
                         z: pz,
                         rotY: pRotY,
+                        vx: shouldSendStop ? 0 : vx,
+                        vz: shouldSendStop ? 0 : vz,
                     });
                 }
+                wasBroadcasting = isMoving;
 
                 // ── Remote avatars: spawn / despawn / lerp ──
                 const presenceStore = useGamePresenceStore.getState();
@@ -392,18 +411,31 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     }
                 }
 
-                // Lerp existing remote avatars toward their targets
-                const LERP_SPEED = 8; // units / second interpolation factor
+                // Lerp existing remote avatars toward extrapolated targets (dead reckoning)
+                const LERP_SPEED = 10;
+                const MAX_EXTRAP_TIME = 0.2; // cap extrapolation at 200ms
                 for (const [addr, remote] of remoteAvatars) {
                     const playerData = remotePlayers.get(addr);
                     if (!playerData) continue;
+
+                    // Extrapolate target using velocity
+                    let goalX = playerData.targetX;
+                    let goalZ = playerData.targetZ;
+                    if (playerData.vx !== 0 || playerData.vz !== 0) {
+                        const elapsed = Math.min(
+                            (Date.now() - playerData.lastUpdateTime) / 1000,
+                            MAX_EXTRAP_TIME,
+                        );
+                        goalX += playerData.vx * elapsed;
+                        goalZ += playerData.vz * elapsed;
+                    }
 
                     const lerpFactor = Math.min(1, dt * LERP_SPEED);
                     const oldX = remote.rig.root.position.x;
                     const oldZ = remote.rig.root.position.z;
 
-                    remote.rig.root.position.x += (playerData.targetX - oldX) * lerpFactor;
-                    remote.rig.root.position.z += (playerData.targetZ - oldZ) * lerpFactor;
+                    remote.rig.root.position.x += (goalX - oldX) * lerpFactor;
+                    remote.rig.root.position.z += (goalZ - oldZ) * lerpFactor;
                     remote.rig.root.rotation.y += (playerData.targetRotY - remote.rig.root.rotation.y) * lerpFactor;
 
                     // Detect movement for walk animation

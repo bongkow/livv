@@ -348,6 +348,8 @@ async function handleIncomingMessage(raw: Record<string, unknown>) {
                 data.x as number,
                 data.z as number,
                 data.rotY as number,
+                data.vx as number | undefined,
+                data.vz as number | undefined,
             );
             break;
         }
