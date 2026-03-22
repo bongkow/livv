@@ -82,6 +82,7 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const engineRef = useRef<Engine | null>(null);
     const coordRef = useRef<HTMLSpanElement>(null);
+    const viewModeRef = useRef<HTMLSpanElement>(null);
     const [showDetail, setShowDetail] = useState(false);
     const [detailAddress, setDetailAddress] = useState("");
 
@@ -125,10 +126,44 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
 
             // ── World ──
             const { colliders, insects } = buildWorld(scene);
-            let elapsedTime = 0;
 
             // ── Player ──
             const rig = buildAvatar(scene, walletAddress, shadowGen);
+
+            // Restore last position from localStorage (default 0,0,0)
+            const POSITION_STORAGE_KEY = `livv:lastPosition:${walletAddress.toLowerCase()}`;
+            let savedPos = { x: 0, z: 0, rotY: 0 };
+            try {
+                const stored = localStorage.getItem(POSITION_STORAGE_KEY);
+                if (stored) savedPos = JSON.parse(stored);
+            } catch { /* ignore corrupt data */ }
+
+            // Avoid spawning on top of existing players
+            const existingPlayers = useGamePresenceStore.getState().remotePlayers;
+            let spawnX = savedPos.x, spawnZ = savedPos.z;
+            const SPAWN_CLEAR_RADIUS = 1.0;
+            for (let attempt = 0; attempt < 10; attempt++) {
+                let blocked = false;
+                for (const [, p] of existingPlayers) {
+                    const dx = spawnX - p.x;
+                    const dz = spawnZ - p.z;
+                    if (dx * dx + dz * dz < SPAWN_CLEAR_RADIUS * SPAWN_CLEAR_RADIUS) {
+                        blocked = true;
+                        break;
+                    }
+                }
+                if (!blocked) break;
+                const angle = Math.random() * Math.PI * 2;
+                spawnX += Math.cos(angle) * 2;
+                spawnZ += Math.sin(angle) * 2;
+            }
+            rig.root.position.x = spawnX;
+            rig.root.position.z = spawnZ;
+            rig.root.rotation.y = savedPos.rotY;
+
+            // Set initial local position in store
+            useGamePresenceStore.getState().setLocalPosition(spawnX, spawnZ, savedPos.rotY);
+
             const labelMesh = buildAddressLabel(scene, rig.root, walletAddress, true);
 
             // ── Make label clickable ──
@@ -170,7 +205,42 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             const BROADCAST_INTERVAL = 0.1; // seconds (~10Hz)
             let positionBroadcastTimer = 0;
 
+            // ── First-person / Third-person toggle ──
+            let isFirstPerson = false;
+            const THIRD_PERSON_RADIUS = 8;
+            const FIRST_PERSON_RADIUS = 0.1;
+
+            function setAvatarVisibility(visible: boolean) {
+                rig.root.getChildMeshes().forEach((m) => {
+                    m.isVisible = visible;
+                });
+                labelMesh.isVisible = visible;
+            }
+
+            function toggleViewMode() {
+                isFirstPerson = !isFirstPerson;
+                if (isFirstPerson) {
+                    camera.radius = FIRST_PERSON_RADIUS;
+                    camera.lowerRadiusLimit = FIRST_PERSON_RADIUS;
+                    camera.upperRadiusLimit = FIRST_PERSON_RADIUS;
+                    setAvatarVisibility(false);
+                } else {
+                    camera.radius = THIRD_PERSON_RADIUS;
+                    camera.lowerRadiusLimit = 3;
+                    camera.upperRadiusLimit = 25;
+                    setAvatarVisibility(true);
+                }
+                // Update HUD
+                if (viewModeRef.current) {
+                    viewModeRef.current.textContent = isFirstPerson ? "1st Person (V)" : "3rd Person (V)";
+                }
+            }
+
             const onKeyDown = (e: KeyboardEvent) => {
+                if (e.key.toLowerCase() === "v") {
+                    toggleViewMode();
+                    return;
+                }
                 keys[e.key.toLowerCase()] = true;
             };
             const onKeyUp = (e: KeyboardEvent) => {
@@ -199,18 +269,33 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 if (isMoving) {
                     move.normalize().scaleInPlace(SPEED);
 
+                    // Build dynamic collider list (static world + remote avatars)
+                    // Skip avatars we're already overlapping with (so we can move OUT)
+                    const allColliders = [...colliders];
                     const curX = rig.root.position.x;
                     const curZ = rig.root.position.z;
+                    for (const [, remote] of remoteAvatars) {
+                        const rx = remote.rig.root.position.x;
+                        const rz = remote.rig.root.position.z;
+                        const dx = curX - rx;
+                        const dz = curZ - rz;
+                        const minDist = PLAYER_RADIUS * 2;
+                        // Only add as collider if we're NOT currently inside them
+                        if (dx * dx + dz * dz >= minDist * minDist) {
+                            allColliders.push({ x: rx, z: rz, radius: PLAYER_RADIUS });
+                        }
+                    }
+
                     const newX = curX + move.x;
                     const newZ = curZ + move.z;
 
                     // Try full move first; if blocked, try axis-separated (wall sliding)
-                    if (!isPositionBlocked(newX, newZ, colliders)) {
+                    if (!isPositionBlocked(newX, newZ, allColliders)) {
                         rig.root.position.x = newX;
                         rig.root.position.z = newZ;
-                    } else if (!isPositionBlocked(newX, curZ, colliders)) {
+                    } else if (!isPositionBlocked(newX, curZ, allColliders)) {
                         rig.root.position.x = newX;
-                    } else if (!isPositionBlocked(curX, newZ, colliders)) {
+                    } else if (!isPositionBlocked(curX, newZ, allColliders)) {
                         rig.root.position.z = newZ;
                     }
                     // else: fully blocked, don't move
@@ -221,7 +306,7 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
 
                     // Camera follows
                     camera.target.x = rig.root.position.x;
-                    camera.target.y = 1.5;
+                    camera.target.y = isFirstPerson ? rig.headBaseY * 0.95 : 1.5;
                     camera.target.z = rig.root.position.z;
 
                     // Advance walk phase
@@ -237,9 +322,8 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 // Animate limbs (lerps back to standing when stopped)
                 animateWalkCycle(rig, walkPhase, walkIntensity);
 
-                // Animate insects
-                elapsedTime += dt;
-                animateInsects(insects, elapsedTime);
+                // Animate insects (NPC — synced via Date.now)
+                animateInsects(insects);
 
                 // Update coordinate display (direct DOM for perf)
                 if (coordRef.current) {
@@ -253,12 +337,27 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 positionBroadcastTimer += dt;
                 if (isMoving && positionBroadcastTimer >= BROADCAST_INTERVAL) {
                     positionBroadcastTimer = 0;
+                    const px = rig.root.position.x;
+                    const pz = rig.root.position.z;
+                    const pRotY = rig.root.rotation.y;
+
+                    // Save locally so i_am_here replies include our position
+                    useGamePresenceStore.getState().setLocalPosition(px, pz, pRotY);
+
+                    // Persist to localStorage for next session
+                    try {
+                        localStorage.setItem(
+                            `livv:lastPosition:${walletAddress.toLowerCase()}`,
+                            JSON.stringify({ x: px, z: pz, rotY: pRotY }),
+                        );
+                    } catch { /* quota exceeded — ignore */ }
+
                     const wsStore = useWebSocketStore.getState();
                     wsStore.sendMessage("broadcastToChannel", {
                         type: "position",
-                        x: rig.root.position.x,
-                        z: rig.root.position.z,
-                        rotY: rig.root.rotation.y,
+                        x: px,
+                        z: pz,
+                        rotY: pRotY,
                     });
                 }
 
@@ -363,6 +462,9 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             />
             <div className="absolute bottom-4 left-4 rounded bg-black/60 px-3 py-1.5 font-mono text-xs text-white/80 backdrop-blur-sm">
                 <span ref={coordRef}>X: 0.0  Y: 0.0  Z: 0.0</span>
+            </div>
+            <div className="absolute bottom-4 right-4 rounded bg-black/60 px-3 py-1.5 text-xs text-white/80 backdrop-blur-sm">
+                <span ref={viewModeRef}>3rd Person (V)</span>
             </div>
             {showDetail && detailAddress && (
                 <AvatarDetailPanel

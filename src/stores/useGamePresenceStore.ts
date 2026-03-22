@@ -20,12 +20,14 @@ export interface RemotePlayer {
 
 interface GamePresenceState {
     remotePlayers: Map<string, RemotePlayer>;
+    localPosition: { x: number; z: number; rotY: number };
 }
 
 interface GamePresenceActions {
     addRemotePlayer: (address: string, x?: number, z?: number, rotY?: number) => void;
     removeRemotePlayer: (address: string) => void;
     updateRemotePosition: (address: string, x: number, z: number, rotY: number) => void;
+    setLocalPosition: (x: number, z: number, rotY: number) => void;
     clearAllRemotePlayers: () => void;
 }
 
@@ -33,6 +35,7 @@ type GamePresenceStore = GamePresenceState & GamePresenceActions;
 
 export const useGamePresenceStore = create<GamePresenceStore>()((set, get) => ({
     remotePlayers: new Map(),
+    localPosition: { x: 0, z: 0, rotY: 0 },
 
     addRemotePlayer: (address: string, x = 0, z = 0, rotY = 0) => {
         const players = new Map(get().remotePlayers);
@@ -70,6 +73,10 @@ export const useGamePresenceStore = create<GamePresenceStore>()((set, get) => ({
             targetRotY: rotY,
         });
         set({ remotePlayers: players });
+    },
+
+    setLocalPosition: (x: number, z: number, rotY: number) => {
+        set({ localPosition: { x, z, rotY } });
     },
 
     clearAllRemotePlayers: () => {

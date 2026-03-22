@@ -4,8 +4,10 @@ import { useState } from "react";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useWebSocketStore } from "@/stores/useWebSocketStore";
 import { truncateAddress } from "@/utils/truncateAddress";
-import FaceAvatar from "./FaceAvatar";
+import dynamic from "next/dynamic";
 import PeerSettingsModal from "./PeerSettingsModal";
+
+const Avatar3D = dynamic(() => import("@/components/Avatar3D"), { ssr: false });
 
 const WS_RING_STYLES: Record<string, string> = {
     connected:
@@ -37,7 +39,9 @@ export default function ConnectWalletButton() {
                         title={WS_STATUS_LABELS[connectionStatus]}
                         className={`inline-flex rounded-full shrink-0 transition-shadow duration-300 cursor-pointer ${WS_RING_STYLES[connectionStatus]}`}
                     >
-                        <FaceAvatar address={walletAddress} size={36} />
+                        <div className="w-9 h-9 overflow-hidden rounded-full">
+                            <Avatar3D address={walletAddress} size={36} faceOnly />
+                        </div>
                     </button>
                     <span className="text-sm text-white/50 font-mono">
                         {truncateAddress(walletAddress)}

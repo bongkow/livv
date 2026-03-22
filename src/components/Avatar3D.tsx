@@ -24,9 +24,10 @@ interface Avatar3DProps {
     address: string;
     size?: number;
     interactive?: boolean;
+    faceOnly?: boolean;
 }
 
-export default function Avatar3D({ address, size = 200, interactive = false }: Avatar3DProps) {
+export default function Avatar3D({ address, size = 200, interactive = false, faceOnly = false }: Avatar3DProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const engineRef = useRef<Engine | null>(null);
 
@@ -43,12 +44,15 @@ export default function Avatar3D({ address, size = 200, interactive = false }: A
             scene.clearColor = new Color4(0, 0, 0, 0);
 
             // ── Camera — framing the avatar ──
+            const camRadius = faceOnly ? 1.3 : 4;
+            const camTargetY = faceOnly ? 1.75 : 1.1;
+            const camBeta = faceOnly ? Math.PI / 2 : Math.PI / 2.8;
             const camera = new ArcRotateCamera(
                 "avatarCam",
-                -Math.PI / 2,
-                Math.PI / 2.8,
-                4,
-                new Vector3(0, 1.1, 0),
+                Math.PI / 2,
+                camBeta,
+                camRadius,
+                new Vector3(0, camTargetY, 0),
                 scene,
             );
 
@@ -61,8 +65,8 @@ export default function Avatar3D({ address, size = 200, interactive = false }: A
                 camera.upperBetaLimit = Math.PI - 0.3;
                 camera.panningSensibility = 0; // disable panning
             } else {
-                camera.lowerRadiusLimit = 4;
-                camera.upperRadiusLimit = 4;
+                camera.lowerRadiusLimit = camRadius;
+                camera.upperRadiusLimit = camRadius;
                 // No user interaction — display-only
                 camera.inputs.clear();
             }
@@ -74,8 +78,8 @@ export default function Avatar3D({ address, size = 200, interactive = false }: A
             // ── Build avatar ──
             const rig = buildAvatar(scene, address);
 
-            // ── Slow idle rotation (disabled when interactive) ──
-            if (!interactive) {
+            // ── Slow idle rotation (disabled when interactive or faceOnly) ──
+            if (!interactive && !faceOnly) {
                 let angle = 0;
                 scene.onBeforeRenderObservable.add(() => {
                     angle += 0.005;
@@ -96,7 +100,7 @@ export default function Avatar3D({ address, size = 200, interactive = false }: A
                 engineRef.current = null;
             };
         },
-        [address, interactive],
+        [address, interactive, faceOnly],
     );
 
     useEffect(() => {

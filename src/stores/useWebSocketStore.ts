@@ -316,9 +316,13 @@ async function handleIncomingMessage(raw: Record<string, unknown>) {
                 const myAddrIAH = AuthIAH.getState().walletAddress;
                 if (myAddrIAH && peerAddr.toLowerCase() !== myAddrIAH.toLowerCase()) {
                     const wsStore = useWebSocketStore.getState();
+                    const myPos = useGamePresenceStore.getState().localPosition;
                     wsStore.sendMessage("broadcastToChannel", {
                         type: "i_am_here",
                         address: myAddrIAH,
+                        x: myPos.x,
+                        z: myPos.z,
+                        rotY: myPos.rotY,
                     });
                 }
             }

@@ -285,7 +285,8 @@ export function buildWorld(scene: Scene): WorldBuildResult & { insects: InsectDa
 
 // ─── Insect animation (call in render loop) ───
 
-export function animateInsects(insects: InsectData[], time: number): void {
+export function animateInsects(insects: InsectData[]): void {
+    const time = Date.now() / 1000; // shared clock across all clients
     for (const insect of insects) {
         const t = time * insect.speed + insect.phase;
         insect.node.position.set(

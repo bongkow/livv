@@ -65,10 +65,20 @@ export default function OpenWorldPage() {
     const connectionStatus = useWebSocketStore((s) => s.connectionStatus);
     useEffect(() => {
         if (connectionStatus === "connected" && walletAddress) {
+            // Read saved position so others spawn us at the right spot
+            let pos = { x: 0, z: 0, rotY: 0 };
+            try {
+                const stored = localStorage.getItem(`livv:lastPosition:${walletAddress.toLowerCase()}`);
+                if (stored) pos = JSON.parse(stored);
+            } catch { /* ignore */ }
+
             const wsStore = useWebSocketStore.getState();
             wsStore.sendMessage("broadcastToChannel", {
                 type: "i_am_here",
                 address: walletAddress,
+                x: pos.x,
+                z: pos.z,
+                rotY: pos.rotY,
             });
         }
     }, [connectionStatus, walletAddress]);
