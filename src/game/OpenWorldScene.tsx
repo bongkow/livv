@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
+import dynamic from "next/dynamic";
 import {
     Engine,
     Scene,
@@ -16,10 +17,45 @@ import {
     Mesh,
 } from "@babylonjs/core";
 import { buildAvatar, buildAddressLabel } from "@/game/avatarBuilder";
+import type { AvatarRig } from "@/game/avatarBuilder";
+
+const AvatarDetailPanel = dynamic(() => import("@/components/AvatarDetailPanel"), {
+    ssr: false,
+});
+
+// ─── Collision helpers ───
+
+interface Collider {
+    x: number;
+    z: number;
+    radius: number;
+}
+
+const WORLD_HALF = 98; // world boundary (ground is 200×200, keep 2 units of margin)
+const PLAYER_RADIUS = 0.3;
+
+function isPositionBlocked(x: number, z: number, colliders: Collider[]): boolean {
+    // World boundary check
+    if (Math.abs(x) > WORLD_HALF || Math.abs(z) > WORLD_HALF) return true;
+
+    // Object collision check (circle vs circle in XZ)
+    for (const c of colliders) {
+        const dx = x - c.x;
+        const dz = z - c.z;
+        const minDist = PLAYER_RADIUS + c.radius;
+        if (dx * dx + dz * dz < minDist * minDist) return true;
+    }
+    return false;
+}
 
 // ─── Ground with simple grid ───
 
-function buildGround(scene: Scene): Mesh {
+interface GroundBuildResult {
+    ground: Mesh;
+    colliders: Collider[];
+}
+
+function buildGround(scene: Scene): GroundBuildResult {
     const ground = MeshBuilder.CreateGround(
         "ground",
         { width: 200, height: 200, subdivisions: 40 },
@@ -31,11 +67,14 @@ function buildGround(scene: Scene): Mesh {
     ground.material = mat;
     ground.receiveShadows = true;
 
-    // Scatter a few simple trees
+    // Scatter a few simple trees and track their positions for collision
     const treeMat = new StandardMaterial("treeTrunk", scene);
     treeMat.diffuseColor = new Color3(0.4, 0.25, 0.13);
     const leafMat = new StandardMaterial("treeLeaf", scene);
     leafMat.diffuseColor = new Color3(0.15, 0.5, 0.15);
+
+    const colliders: Collider[] = [];
+    const TREE_COLLISION_RADIUS = 0.6; // slightly wider than trunk for leaf canopy
 
     for (let i = 0; i < 30; i++) {
         const x = (Math.random() - 0.5) * 160;
@@ -58,9 +97,36 @@ function buildGround(scene: Scene): Mesh {
         );
         leaves.position.set(x, 2.8, z);
         leaves.material = leafMat;
+
+        colliders.push({ x, z, radius: TREE_COLLISION_RADIUS });
     }
 
-    return ground;
+    return { ground, colliders };
+}
+
+// ─── Walk animation helper ───
+
+function animateWalkCycle(rig: AvatarRig, walkPhase: number, intensity: number) {
+    const LEG_SWING = 0.45;   // max leg rotation (radians)
+    const ARM_SWING = 0.35;   // max arm rotation (radians)
+    const HEAD_BOB = 0.015;   // vertical head bobbing amount
+    const BODY_BOB = 0.02;    // vertical body bounce amount
+
+    const t = intensity; // 0 = standing, 1 = full walk
+
+    // Legs swing in opposition: left forward = right backward
+    rig.leftLegPivot.rotation.x = Math.sin(walkPhase) * LEG_SWING * t;
+    rig.rightLegPivot.rotation.x = Math.sin(walkPhase + Math.PI) * LEG_SWING * t;
+
+    // Arms swing opposite to same-side leg (natural gait)
+    rig.leftArmPivot.rotation.x = Math.sin(walkPhase + Math.PI) * ARM_SWING * t;
+    rig.rightArmPivot.rotation.x = Math.sin(walkPhase) * ARM_SWING * t;
+
+    // Head bobs at double frequency (two steps per cycle)
+    rig.head.position.y = rig.headBaseY + Math.abs(Math.sin(walkPhase)) * HEAD_BOB * t;
+
+    // Body bounces up slightly at mid-stride
+    rig.root.position.y = Math.abs(Math.sin(walkPhase)) * BODY_BOB * t;
 }
 
 // ─── Main component ───
@@ -72,6 +138,8 @@ interface OpenWorldSceneProps {
 export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const engineRef = useRef<Engine | null>(null);
+    const coordRef = useRef<HTMLSpanElement>(null);
+    const [showDetail, setShowDetail] = useState(false);
 
     const setup = useCallback(
         (canvas: HTMLCanvasElement) => {
@@ -96,6 +164,7 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             camera.attachControl(canvas, true);
             camera.lowerRadiusLimit = 3;
             camera.upperRadiusLimit = 25;
+            camera.upperBetaLimit = Math.PI / 2.05; // prevent camera from going below ground
             camera.wheelPrecision = 30;
             camera.panningSensibility = 0; // disable panning
 
@@ -111,15 +180,26 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             shadowGen.useBlurExponentialShadowMap = true;
 
             // ── World ──
-            buildGround(scene);
+            const { colliders } = buildGround(scene);
 
             // ── Player ──
-            const player = buildAvatar(scene, walletAddress, shadowGen);
-            buildAddressLabel(scene, player, walletAddress);
+            const rig = buildAvatar(scene, walletAddress, shadowGen);
+            const labelMesh = buildAddressLabel(scene, rig.root, walletAddress);
 
-            // ── Movement (WASD / arrows) ──
+            // ── Make label clickable ──
+            labelMesh.isPickable = true;
+            scene.onPointerDown = (_evt, pickResult) => {
+                if (pickResult?.hit && pickResult.pickedMesh === labelMesh) {
+                    setShowDetail(true);
+                }
+            };
+
+            // ── Movement (WASD / arrows) + walk animation ──
             const keys: Record<string, boolean> = {};
             const SPEED = 0.08;
+            const WALK_CYCLE_SPEED = 8; // how fast the walk cycle plays
+            let walkPhase = 0;
+            let walkIntensity = 0; // lerps 0→1 when moving, 1→0 when stopping
 
             const onKeyDown = (e: KeyboardEvent) => {
                 keys[e.key.toLowerCase()] = true;
@@ -131,6 +211,8 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             window.addEventListener("keyup", onKeyUp);
 
             scene.onBeforeRenderObservable.add(() => {
+                const dt = engine.getDeltaTime() / 1000; // seconds
+
                 // Derive forward/right from camera orientation (projected onto XZ)
                 const forward = camera.getForwardRay().direction;
                 forward.y = 0;
@@ -143,18 +225,55 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 if (keys["a"] || keys["arrowleft"]) move.addInPlace(right);
                 if (keys["d"] || keys["arrowright"]) move.subtractInPlace(right);
 
-                if (move.length() > 0.001) {
+                const isMoving = move.length() > 0.001;
+
+                if (isMoving) {
                     move.normalize().scaleInPlace(SPEED);
-                    player.position.addInPlace(move);
+
+                    const curX = rig.root.position.x;
+                    const curZ = rig.root.position.z;
+                    const newX = curX + move.x;
+                    const newZ = curZ + move.z;
+
+                    // Try full move first; if blocked, try axis-separated (wall sliding)
+                    if (!isPositionBlocked(newX, newZ, colliders)) {
+                        rig.root.position.x = newX;
+                        rig.root.position.z = newZ;
+                    } else if (!isPositionBlocked(newX, curZ, colliders)) {
+                        rig.root.position.x = newX;
+                    } else if (!isPositionBlocked(curX, newZ, colliders)) {
+                        rig.root.position.z = newZ;
+                    }
+                    // else: fully blocked, don't move
 
                     // Rotate avatar to face movement direction
                     const angle = Math.atan2(move.x, move.z);
-                    player.rotation.y = angle;
+                    rig.root.rotation.y = angle;
 
                     // Camera follows
-                    camera.target.x = player.position.x;
+                    camera.target.x = rig.root.position.x;
                     camera.target.y = 1.5;
-                    camera.target.z = player.position.z;
+                    camera.target.z = rig.root.position.z;
+
+                    // Advance walk phase
+                    walkPhase += WALK_CYCLE_SPEED * dt;
+
+                    // Smoothly ramp up walk intensity
+                    walkIntensity = Math.min(1, walkIntensity + dt * 6);
+                } else {
+                    // Smoothly ramp down walk intensity
+                    walkIntensity = Math.max(0, walkIntensity - dt * 6);
+                }
+
+                // Animate limbs (lerps back to standing when stopped)
+                animateWalkCycle(rig, walkPhase, walkIntensity);
+
+                // Update coordinate display (direct DOM for perf)
+                if (coordRef.current) {
+                    const px = rig.root.position.x.toFixed(1);
+                    const py = rig.root.position.y.toFixed(1);
+                    const pz = rig.root.position.z.toFixed(1);
+                    coordRef.current.textContent = `X: ${px}  Y: ${py}  Z: ${pz}`;
                 }
             });
 
@@ -183,10 +302,21 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
     }, [setup]);
 
     return (
-        <canvas
-            ref={canvasRef}
-            className="h-full w-full outline-none"
-            onContextMenu={(e) => e.preventDefault()}
-        />
+        <div className="relative h-full w-full">
+            <canvas
+                ref={canvasRef}
+                className="h-full w-full outline-none"
+                onContextMenu={(e) => e.preventDefault()}
+            />
+            <div className="absolute bottom-4 left-4 rounded bg-black/60 px-3 py-1.5 font-mono text-xs text-white/80 backdrop-blur-sm">
+                <span ref={coordRef}>X: 0.0  Y: 0.0  Z: 0.0</span>
+            </div>
+            {showDetail && (
+                <AvatarDetailPanel
+                    address={walletAddress}
+                    onClose={() => setShowDetail(false)}
+                />
+            )}
+        </div>
     );
 }

@@ -16,7 +16,7 @@ const nextConfig: NextConfig = {
               "default-src 'self'",
               "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
               "style-src 'self' 'unsafe-inline'",
-              "connect-src 'self' wss://ws.bongkow.com https://api.bongkow.com",
+              "connect-src 'self' wss://ws.bongkow.com https://api.bongkow.com https://mainnet.base.org",
               "img-src 'self' data:",
               "media-src 'self' blob:",
               "font-src 'self'",

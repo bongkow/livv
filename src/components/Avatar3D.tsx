@@ -3,7 +3,8 @@
  * @Purpose: Reusable 3D avatar rendered in a small Babylon.js canvas
  * @Logic: Creates a tiny Babylon engine, renders the shared buildAvatar character
  *         with fixed camera, soft lighting, transparent background, and slow idle rotation.
- * @Interfaces: default export Avatar3D ({ address, size? })
+ *         When `interactive` is true, the camera can be orbited and zoomed with the mouse.
+ * @Interfaces: default export Avatar3D ({ address, size?, interactive? })
  * @Constraints: Client-only (uses canvas). Disposes engine on unmount.
  */
 "use client";
@@ -22,9 +23,10 @@ import { buildAvatar } from "@/game/avatarBuilder";
 interface Avatar3DProps {
     address: string;
     size?: number;
+    interactive?: boolean;
 }
 
-export default function Avatar3D({ address, size = 200 }: Avatar3DProps) {
+export default function Avatar3D({ address, size = 200, interactive = false }: Avatar3DProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const engineRef = useRef<Engine | null>(null);
 
@@ -49,24 +51,37 @@ export default function Avatar3D({ address, size = 200 }: Avatar3DProps) {
                 new Vector3(0, 1.1, 0),
                 scene,
             );
-            camera.lowerRadiusLimit = 4;
-            camera.upperRadiusLimit = 4;
-            // No user interaction — display-only
-            camera.inputs.clear();
+
+            if (interactive) {
+                // Allow orbit + zoom with mouse
+                camera.attachControl(canvas, true);
+                camera.lowerRadiusLimit = 2.5;
+                camera.upperRadiusLimit = 7;
+                camera.lowerBetaLimit = 0.3;
+                camera.upperBetaLimit = Math.PI - 0.3;
+                camera.panningSensibility = 0; // disable panning
+            } else {
+                camera.lowerRadiusLimit = 4;
+                camera.upperRadiusLimit = 4;
+                // No user interaction — display-only
+                camera.inputs.clear();
+            }
 
             // ── Soft lighting ──
             const hemi = new HemisphericLight("hemi", new Vector3(0, 1, 0.3), scene);
             hemi.intensity = 1.0;
 
             // ── Build avatar ──
-            const player = buildAvatar(scene, address);
+            const rig = buildAvatar(scene, address);
 
-            // ── Slow idle rotation ──
-            let angle = 0;
-            scene.onBeforeRenderObservable.add(() => {
-                angle += 0.005;
-                player.rotation.y = angle;
-            });
+            // ── Slow idle rotation (disabled when interactive) ──
+            if (!interactive) {
+                let angle = 0;
+                scene.onBeforeRenderObservable.add(() => {
+                    angle += 0.005;
+                    rig.root.rotation.y = angle;
+                });
+            }
 
             // ── Render loop ──
             engine.runRenderLoop(() => scene.render());
@@ -81,7 +96,7 @@ export default function Avatar3D({ address, size = 200 }: Avatar3DProps) {
                 engineRef.current = null;
             };
         },
-        [address],
+        [address, interactive],
     );
 
     useEffect(() => {

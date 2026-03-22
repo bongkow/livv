@@ -71,7 +71,7 @@ export default function HeroSection() {
                     {isConnected && walletAddress && (
                         <div className="hidden sm:flex flex-col items-center gap-3 animate-fade-in-up">
                             <div className="rounded-full bg-white/[0.04] p-4 ring-1 ring-white/[0.08]">
-                                <Avatar3D address={walletAddress} size={220} />
+                                <Avatar3D address={walletAddress} size={220} interactive />
                             </div>
                             <span className="text-xs text-white/30 font-mono">
                                 {truncateAddress(walletAddress)}

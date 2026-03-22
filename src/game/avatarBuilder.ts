@@ -3,7 +3,8 @@
  * @Purpose: Shared 3D avatar builder — deterministic human-like Babylon.js character
  * @Logic: Parses address hex bytes to select skin tone, hair color, eye color, shirt hue,
  *         and facial feature proportions. Builds full 3D character with anatomical detail.
- * @Interfaces: buildAvatar(scene, address, shadow?), buildAddressLabel(scene, parent, address)
+ *         Limbs use pivot TransformNodes for walk animation.
+ * @Interfaces: buildAvatar(scene, address, shadow?) → AvatarRig, buildAddressLabel(scene, parent, address)
  * @Constraints: Requires @babylonjs/core.
  */
 
@@ -95,18 +96,42 @@ function createJoint(
     return joint;
 }
 
+// ─── Avatar rig interface ───
+
+export interface AvatarRig {
+    root: TransformNode;
+    head: Mesh;
+    headBaseY: number;
+    leftArmPivot: TransformNode;
+    rightArmPivot: TransformNode;
+    leftLegPivot: TransformNode;
+    rightLegPivot: TransformNode;
+}
+
 // ─── Avatar builder ───
 
 export function buildAvatar(
     scene: Scene,
     address: string,
     shadow?: ShadowGenerator,
-): TransformNode {
+): AvatarRig {
     const bytes = parseAddressBytes(address);
     const skinTone = SKIN_TONES[bytes[0] % SKIN_TONES.length];
     const hairColor = HAIR_COLORS[bytes[2] % HAIR_COLORS.length];
     const skinColor = Color3.FromHexString(skinTone);
     const hairCol = Color3.FromHexString(hairColor);
+
+    // ── Gender & height (derived from address) ──
+    const isFemale = bytes[1] % 2 === 0;
+    const heightByte = bytes[14] ?? 128;
+    const heightBase = isFemale ? 1.55 : 1.70;
+    const heightRange = isFemale ? 0.20 : 0.20; // female: 1.55–1.75m, male: 1.70–1.90m
+    const heightScale = (heightBase + (heightByte / 255) * heightRange) / 1.82;
+
+    // ── Gender-dependent body proportions ──
+    const shoulderX = isFemale ? 0.24 : 0.30;
+    const hipX = isFemale ? 0.14 : 0.12;
+    const limbScale = isFemale ? 0.85 : 1.0; // thinner limbs for female
 
     const root = new TransformNode("player", scene);
 
@@ -140,12 +165,13 @@ export function buildAvatar(
     head.material = skinMat;
 
     // ── Eyes ──
-    // Eye size varies by b[5]
+    // Eye size varies by b[5]. Uses flattened ellipsoids (thin Z) so they
+    // sit flush against the head surface instead of protruding.
     const eyeSizeVariant = bytes[5] % 4;
-    const eyeScale = 0.07 + eyeSizeVariant * 0.008; // 0.07 – 0.094
-    const eyeSpacing = 0.10;
+    const eyeScale = 0.06 + eyeSizeVariant * 0.006; // 0.06 – 0.078 (smaller range)
+    const eyeSpacing = 0.09;  // tighter — keeps edges on the face
     const eyeYOffset = -0.02;
-    const eyeZOffset = 0.20;
+    const eyeZOffset = 0.24;  // right on the head surface
 
     const whiteMat = makeMat(scene, "eyeWhiteMat", Color3.White());
     whiteMat.specularColor = new Color3(0.3, 0.3, 0.3);
@@ -156,36 +182,75 @@ export function buildAvatar(
         const prefix = side === -1 ? "left" : "right";
         const ex = side * eyeSpacing;
 
-        // Sclera (white)
-        const sclera = MeshBuilder.CreateSphere(`${prefix}Sclera`, { diameter: eyeScale * 2, segments: 8 }, scene);
+        // Sclera — compact disc, fully on the face
+        const sclera = MeshBuilder.CreateSphere(`${prefix}Sclera`, {
+            diameterX: eyeScale * 1.8,
+            diameterY: eyeScale * 1.2,
+            diameterZ: eyeScale * 0.35,
+            segments: 10,
+        }, scene);
         sclera.position.set(ex, headY + eyeYOffset, eyeZOffset);
         sclera.parent = root;
         sclera.material = whiteMat;
 
-        // Iris (colored) — sits just in front of sclera
-        const iris = MeshBuilder.CreateSphere(`${prefix}Iris`, { diameter: eyeScale * 1.1, segments: 8 }, scene);
-        iris.position.set(ex, headY + eyeYOffset, eyeZOffset + eyeScale * 0.4);
+        // Iris — smaller disc sitting just in front of sclera
+        const iris = MeshBuilder.CreateSphere(`${prefix}Iris`, {
+            diameterX: eyeScale * 0.9,
+            diameterY: eyeScale * 0.9,
+            diameterZ: eyeScale * 0.2,
+            segments: 10,
+        }, scene);
+        iris.position.set(ex, headY + eyeYOffset, eyeZOffset + eyeScale * 0.12);
         iris.parent = root;
         iris.material = irisMat;
 
-        // Pupil (black dot) — sits just in front of iris
-        const pupil = MeshBuilder.CreateSphere(`${prefix}Pupil`, { diameter: eyeScale * 0.55, segments: 6 }, scene);
-        pupil.position.set(ex, headY + eyeYOffset, eyeZOffset + eyeScale * 0.6);
+        // Pupil — tiny disc on top of iris
+        const pupil = MeshBuilder.CreateSphere(`${prefix}Pupil`, {
+            diameterX: eyeScale * 0.45,
+            diameterY: eyeScale * 0.45,
+            diameterZ: eyeScale * 0.15,
+            segments: 8,
+        }, scene);
+        pupil.position.set(ex, headY + eyeYOffset, eyeZOffset + eyeScale * 0.18);
         pupil.parent = root;
         pupil.material = pupilMat;
     }
 
     // ── Eyebrows ──
-    // Angle varies by b[10]
-    const browVariant = bytes[10] % 3; // 0=flat, 1=arched, 2=angled
-    const browRotX = browVariant === 1 ? -0.15 : browVariant === 2 ? 0.12 : 0;
+    // Multiple traits derived from address bytes:
+    //   b[10] = shape (flat / arched / angled / furrowed)
+    //   b[9]  = thickness
+    //   b[11] = width
+    //   b[13] = vertical offset
+    const browShapeVariant = bytes[10] % 4; // 0=flat, 1=arched, 2=angled, 3=furrowed
+    const browThicknessVariant = bytes[9] % 3; // 0=thin, 1=medium, 2=thick
+    const browWidthVariant = bytes[11] % 3; // 0=narrow, 1=medium, 2=wide
+    const browVerticalVariant = bytes[13] % 3; // 0=low, 1=mid, 2=high
+
+    const browAngle =
+        browShapeVariant === 1 ? -0.18 :  // arched — outer end tilts down
+        browShapeVariant === 2 ? 0.15 :   // angled — outer end tilts up
+        browShapeVariant === 3 ? 0.25 :   // furrowed — strong inward tilt
+        0;                                // flat
+    const browThickness = 0.012 + browThicknessVariant * 0.006; // 0.012 – 0.024
+    const browWidth = 0.09 + browWidthVariant * 0.015;          // 0.09 – 0.12
+    const browYExtra = -0.01 + browVerticalVariant * 0.01;      // -0.01 – 0.01
+
     const browMat = makeMat(scene, "browMat", hairCol.scale(0.7));
 
     for (const side of [-1, 1]) {
         const prefix = side === -1 ? "left" : "right";
-        const brow = MeshBuilder.CreateBox(`${prefix}Brow`, { width: 0.10, height: 0.015, depth: 0.025 }, scene);
-        brow.position.set(side * eyeSpacing, headY + eyeYOffset + eyeScale * 2.2, eyeZOffset + 0.01);
-        brow.rotation.z = side * browRotX;
+        const brow = MeshBuilder.CreateBox(`${prefix}Brow`, {
+            width: browWidth,
+            height: browThickness,
+            depth: 0.02,
+        }, scene);
+        brow.position.set(
+            side * eyeSpacing,
+            headY + eyeYOffset + eyeScale * 0.9 + browYExtra,
+            eyeZOffset + 0.02,
+        );
+        brow.rotation.z = side * browAngle;
         brow.parent = root;
         brow.material = browMat;
     }
@@ -270,16 +335,25 @@ export function buildAvatar(
     //  NECK (y ≈ 1.45 – 1.58)
     // ═══════════════════════════════════════
 
-    createLimb(scene, "neck", root, skinMat, 0.16, 0.14, 0.16, 0, 1.50, 0);
+    const neckDiam = isFemale ? 0.12 : 0.16;
+    createLimb(scene, "neck", root, skinMat, 0.16, neckDiam * 0.875, neckDiam, 0, 1.50, 0);
 
     // ═══════════════════════════════════════
     //  TORSO (y ≈ 0.95 – 1.45)
+    //  Proportions differ by gender:
+    //    Male:   broad shoulders → narrow waist
+    //    Female: moderate shoulders → narrow waist → wider hips
     // ═══════════════════════════════════════
 
-    // Upper torso — broader at shoulders
+    // Upper torso
     const upperTorso = MeshBuilder.CreateCylinder(
         "upperTorso",
-        { height: 0.30, diameterTop: 0.48, diameterBottom: 0.52, tessellation: 12 },
+        {
+            height: 0.30,
+            diameterTop: isFemale ? 0.40 : 0.48,
+            diameterBottom: isFemale ? 0.44 : 0.52,
+            tessellation: 12,
+        },
         scene,
     );
     upperTorso.position.y = 1.33;
@@ -289,17 +363,27 @@ export function buildAvatar(
     // Mid torso — chest / core
     const midTorso = MeshBuilder.CreateCylinder(
         "midTorso",
-        { height: 0.28, diameterTop: 0.52, diameterBottom: 0.44, tessellation: 12 },
+        {
+            height: 0.28,
+            diameterTop: isFemale ? 0.44 : 0.52,
+            diameterBottom: isFemale ? 0.36 : 0.44,
+            tessellation: 12,
+        },
         scene,
     );
     midTorso.position.y = 1.08;
     midTorso.parent = root;
     midTorso.material = shirtMat;
 
-    // Lower torso / hips — widens slightly for pelvis
+    // Lower torso / hips
     const lowerTorso = MeshBuilder.CreateCylinder(
         "lowerTorso",
-        { height: 0.18, diameterTop: 0.44, diameterBottom: 0.46, tessellation: 12 },
+        {
+            height: 0.18,
+            diameterTop: isFemale ? 0.38 : 0.44,
+            diameterBottom: isFemale ? 0.46 : 0.46,
+            tessellation: 12,
+        },
         scene,
     );
     lowerTorso.position.y = 0.90;
@@ -311,87 +395,111 @@ export function buildAvatar(
     // ═══════════════════════════════════════
 
     const shoulderY = 1.40;
-    const shoulderX = 0.30;
-    createJoint(scene, "leftShoulder", root, shirtMat, 0.16, -shoulderX, shoulderY, 0);
-    createJoint(scene, "rightShoulder", root, shirtMat, 0.16, shoulderX, shoulderY, 0);
+    const shoulderJointSize = isFemale ? 0.13 : 0.16;
+    createJoint(scene, "leftShoulder", root, shirtMat, shoulderJointSize, -shoulderX, shoulderY, 0);
+    createJoint(scene, "rightShoulder", root, shirtMat, shoulderJointSize, shoulderX, shoulderY, 0);
 
     // ═══════════════════════════════════════
-    //  ARMS (upper arm → elbow → forearm → hand)
+    //  ARMS — pivot-based for walk animation
+    //  Each arm is parented to a pivot at the shoulder so
+    //  rotating the pivot swings the entire arm.
     // ═══════════════════════════════════════
 
-    const armUpperLen = 0.30;
-    const armLowerLen = 0.28;
+    const armUpperLen = isFemale ? 0.26 : 0.30;
+    const armLowerLen = isFemale ? 0.24 : 0.28;
+    const armDiamScale = limbScale;
+
+    const leftArmPivot = new TransformNode("leftArmPivot", scene);
+    leftArmPivot.position.set(-shoulderX, shoulderY, 0);
+    leftArmPivot.parent = root;
+
+    const rightArmPivot = new TransformNode("rightArmPivot", scene);
+    rightArmPivot.position.set(shoulderX, shoulderY, 0);
+    rightArmPivot.parent = root;
 
     for (const side of [-1, 1]) {
         const prefix = side === -1 ? "left" : "right";
-        const sx = side * shoulderX;
+        const pivot = side === -1 ? leftArmPivot : rightArmPivot;
 
-        // Upper arm
-        createLimb(scene, `${prefix}UpperArm`, root, skinMat,
-            armUpperLen, 0.12, 0.11,
-            sx, shoulderY - armUpperLen / 2 - 0.06, 0);
+        // Upper arm — relative to pivot (0, down from shoulder, 0)
+        createLimb(scene, `${prefix}UpperArm`, pivot, skinMat,
+            armUpperLen, 0.12 * armDiamScale, 0.11 * armDiamScale,
+            0, -armUpperLen / 2 - 0.06, 0);
 
         // Elbow joint
-        const elbowY = shoulderY - armUpperLen - 0.06;
-        createJoint(scene, `${prefix}Elbow`, root, skinMat, 0.12, sx, elbowY, 0);
+        const elbowRelY = -armUpperLen - 0.06;
+        createJoint(scene, `${prefix}Elbow`, pivot, skinMat, 0.12 * armDiamScale, 0, elbowRelY, 0);
 
         // Forearm
-        createLimb(scene, `${prefix}Forearm`, root, skinMat,
-            armLowerLen, 0.10, 0.08,
-            sx, elbowY - armLowerLen / 2, 0);
+        createLimb(scene, `${prefix}Forearm`, pivot, skinMat,
+            armLowerLen, 0.10 * armDiamScale, 0.08 * armDiamScale,
+            0, elbowRelY - armLowerLen / 2, 0);
 
         // Hand — flattened sphere
-        const handY = elbowY - armLowerLen;
+        const handRelY = elbowRelY - armLowerLen;
         const hand = MeshBuilder.CreateSphere(
-            `${prefix}Hand`, { diameterX: 0.10, diameterY: 0.12, diameterZ: 0.06, segments: 8 }, scene,
+            `${prefix}Hand`, {
+                diameterX: 0.10 * limbScale,
+                diameterY: 0.12 * limbScale,
+                diameterZ: 0.06 * limbScale,
+                segments: 8,
+            }, scene,
         );
-        hand.position.set(sx, handY, 0);
-        hand.parent = root;
+        hand.position.set(0, handRelY, 0);
+        hand.parent = pivot;
         hand.material = skinMat;
     }
 
     // ═══════════════════════════════════════
-    //  LEGS (upper leg → knee → lower leg → foot)
+    //  LEGS — pivot-based for walk animation
+    //  Each leg is parented to a pivot at the hip.
     // ═══════════════════════════════════════
 
     const hipY = 0.82;
-    const hipX = 0.12;
     const legUpperLen = 0.38;
     const legLowerLen = 0.36;
 
+    const leftLegPivot = new TransformNode("leftLegPivot", scene);
+    leftLegPivot.position.set(-hipX, hipY, 0);
+    leftLegPivot.parent = root;
+
+    const rightLegPivot = new TransformNode("rightLegPivot", scene);
+    rightLegPivot.position.set(hipX, hipY, 0);
+    rightLegPivot.parent = root;
+
     for (const side of [-1, 1]) {
         const prefix = side === -1 ? "left" : "right";
-        const lx = side * hipX;
+        const pivot = side === -1 ? leftLegPivot : rightLegPivot;
 
-        // Hip joint
-        createJoint(scene, `${prefix}Hip`, root, pantsMat, 0.15, lx, hipY, 0);
+        // Hip joint — at pivot origin
+        createJoint(scene, `${prefix}Hip`, pivot, pantsMat, 0.15 * limbScale, 0, 0, 0);
 
-        // Upper leg (thigh)
-        createLimb(scene, `${prefix}Thigh`, root, pantsMat,
-            legUpperLen, 0.15, 0.13,
-            lx, hipY - legUpperLen / 2 - 0.04, 0);
+        // Upper leg (thigh) — relative to pivot
+        createLimb(scene, `${prefix}Thigh`, pivot, pantsMat,
+            legUpperLen, 0.15 * limbScale, 0.13 * limbScale,
+            0, -legUpperLen / 2 - 0.04, 0);
 
         // Knee joint
-        const kneeY = hipY - legUpperLen - 0.04;
-        createJoint(scene, `${prefix}Knee`, root, pantsMat, 0.13, lx, kneeY, 0);
+        const kneeRelY = -legUpperLen - 0.04;
+        createJoint(scene, `${prefix}Knee`, pivot, pantsMat, 0.13 * limbScale, 0, kneeRelY, 0);
 
         // Lower leg (shin)
-        createLimb(scene, `${prefix}Shin`, root, pantsMat,
-            legLowerLen, 0.12, 0.09,
-            lx, kneeY - legLowerLen / 2, 0);
+        createLimb(scene, `${prefix}Shin`, pivot, pantsMat,
+            legLowerLen, 0.12 * limbScale, 0.09 * limbScale,
+            0, kneeRelY - legLowerLen / 2, 0);
 
         // Ankle
-        const ankleY = kneeY - legLowerLen;
-        createJoint(scene, `${prefix}Ankle`, root, skinMat, 0.09, lx, ankleY, 0);
+        const ankleRelY = kneeRelY - legLowerLen;
+        createJoint(scene, `${prefix}Ankle`, pivot, skinMat, 0.09 * limbScale, 0, ankleRelY, 0);
 
         // Foot — elongated box, extends forward
         const foot = MeshBuilder.CreateBox(
             `${prefix}Foot`,
-            { width: 0.12, height: 0.06, depth: 0.22 },
+            { width: 0.12 * limbScale, height: 0.06, depth: 0.22 * limbScale },
             scene,
         );
-        foot.position.set(lx, ankleY - 0.03, 0.04);
-        foot.parent = root;
+        foot.position.set(0, ankleRelY - 0.03, 0.04);
+        foot.parent = pivot;
         foot.material = shoeMat;
     }
 
@@ -403,7 +511,10 @@ export function buildAvatar(
         });
     }
 
-    return root;
+    // ── Height scaling ──
+    root.scaling.setAll(heightScale);
+
+    return { root, head, headBaseY: headY, leftArmPivot, rightArmPivot, leftLegPivot, rightLegPivot };
 }
 
 // ─── Address label (3D text plane) ───
@@ -412,7 +523,7 @@ export function buildAddressLabel(
     scene: Scene,
     parent: TransformNode,
     address: string,
-): void {
+): Mesh {
     const label = truncateAddress(address);
     const plane = MeshBuilder.CreatePlane("label", { width: 2, height: 0.3 }, scene);
     plane.position.y = 2.5;
@@ -444,4 +555,5 @@ export function buildAddressLabel(
     mat.emissiveColor = Color3.White();
     mat.disableLighting = true;
     plane.material = mat;
+    return plane;
 }
