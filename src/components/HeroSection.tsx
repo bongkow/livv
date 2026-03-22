@@ -11,7 +11,16 @@
 
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/stores/useAuthStore";
-import FullBodyAvatar from "@/components/FullBodyAvatar";
+import dynamic from "next/dynamic";
+
+const Avatar3D = dynamic(() => import("@/components/Avatar3D"), {
+    ssr: false,
+    loading: () => (
+        <div className="flex items-center justify-center" style={{ width: 220, height: 220 }}>
+            <span className="text-white/20 text-xs">Loading…</span>
+        </div>
+    ),
+});
 import { truncateAddress } from "@/utils/truncateAddress";
 
 export default function HeroSection() {
@@ -62,7 +71,7 @@ export default function HeroSection() {
                     {isConnected && walletAddress && (
                         <div className="hidden sm:flex flex-col items-center gap-3 animate-fade-in-up">
                             <div className="rounded-full bg-white/[0.04] p-4 ring-1 ring-white/[0.08]">
-                                <FullBodyAvatar address={walletAddress} size={180} />
+                                <Avatar3D address={walletAddress} size={220} />
                             </div>
                             <span className="text-xs text-white/30 font-mono">
                                 {truncateAddress(walletAddress)}

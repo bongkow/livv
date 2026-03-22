@@ -12,7 +12,16 @@ import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { truncateAddress } from "@/utils/truncateAddress";
-import FullBodyAvatar from "./FullBodyAvatar";
+import dynamic from "next/dynamic";
+
+const Avatar3D = dynamic(() => import("@/components/Avatar3D"), {
+    ssr: false,
+    loading: () => (
+        <div className="flex items-center justify-center" style={{ width: 160, height: 160 }}>
+            <span className="text-white/20 text-xs">Loading…</span>
+        </div>
+    ),
+});
 import TokenTab from "./TokenTab";
 
 // ─── Tab registry (extensible) ───
@@ -76,7 +85,7 @@ export default function PeerSettingsModal({
             >
                 {/* Left avatar column — 1/4 width */}
                 <div className="flex flex-col items-center justify-center gap-3 w-1/4 bg-white/[0.02] border-r border-white/[0.08] py-8 px-3">
-                    <FullBodyAvatar address={walletAddress} size={200} />
+                    <Avatar3D address={walletAddress} size={200} />
                     <span className="text-[10px] text-white/30 font-mono text-center break-all leading-relaxed">
                         {truncateAddress(walletAddress)}
                     </span>
