@@ -1,11 +1,10 @@
 /*
  * @Module: worldBuilder
- * @Purpose: Build realistic world using Babylon.js CDN assets (villagePack GLB models)
- * @Logic: Loads tree, bush, and rock GLB models from assets.babylonjs.com,
- *         clones them across the terrain with random scale/rotation.
- *         Falls back to procedural geometry if CDN load fails.
- * @Interfaces: buildWorld(scene, shadow?) → Promise<WorldBuildResult>
- * @Constraints: Requires @babylonjs/core, @babylonjs/loaders
+ * @Purpose: Build realistic ground terrain with trees, rocks, grass, and insects
+ * @Logic: Creates PBR-shaded procedural terrain with multi-layer tree canopies,
+ *         natural rock formations, dense grass, and animated insects.
+ * @Interfaces: buildWorld(scene, shadow?) → WorldBuildResult
+ * @Constraints: Requires @babylonjs/core
  */
 
 import {
@@ -18,9 +17,7 @@ import {
     TransformNode,
     Vector3,
     ShadowGenerator,
-    SceneLoader,
 } from "@babylonjs/core";
-import "@babylonjs/loaders/glTF";
 
 // ─── Types ───
 
@@ -47,69 +44,19 @@ function mulberry32(seed: number) {
     };
 }
 
-// ─── CDN asset URLs ───
+// ─── Shared PBR material factory ───
 
-const CDN = "https://assets.babylonjs.com/meshes/villagePack/";
-
-const TREE_MODELS = ["tree1/tree1.glb", "tree2/tree2.glb", "tree3/tree3.glb", "tree4/tree4.glb"];
-const BUSH_MODELS = ["bush1/bush1.glb", "bush2/bush2.glb", "bush3/bush3.glb"];
-const ROCK_MODELS = ["rocks1/rocks1.glb", "rocks2/rocks2.glb", "rocks3/rocks3.glb"];
-
-// ─── Load a GLB template from CDN ───
-
-async function loadTemplate(
-    scene: Scene,
-    url: string,
-    name: string,
-): Promise<TransformNode | null> {
-    try {
-        const result = await SceneLoader.ImportMeshAsync("", CDN, url, scene);
-        if (result.meshes.length === 0) return null;
-
-        // Wrap all loaded meshes under one parent
-        const root = new TransformNode(`${name}_template`, scene);
-        for (const m of result.meshes) {
-            if (!m.parent || m.parent === scene) {
-                m.parent = root;
-            }
-        }
-        // Hide the template — we'll clone from it
-        root.setEnabled(false);
-        return root;
-    } catch {
-        return null;
-    }
+function pbrMat(scene: Scene, name: string, albedo: Color3, roughness: number, metallic = 0): PBRMaterial {
+    const mat = new PBRMaterial(name, scene);
+    mat.albedoColor = albedo;
+    mat.roughness = roughness;
+    mat.metallic = metallic;
+    return mat;
 }
 
-// ─── Clone a template at a position with random transform ───
+// ─── Tree builder ───
 
-function placeClone(
-    template: TransformNode,
-    name: string,
-    x: number,
-    z: number,
-    scale: number,
-    rotY: number,
-    shadow?: ShadowGenerator,
-): void {
-    const clone = template.clone(name, null);
-    if (!clone) return;
-    clone.setEnabled(true);
-    clone.position.set(x, 0, z);
-    clone.scaling.setAll(scale);
-    clone.rotation.y = rotY;
-
-    if (shadow) {
-        clone.getChildMeshes().forEach((m) => {
-            shadow.addShadowCaster(m as Mesh);
-            m.receiveShadows = true;
-        });
-    }
-}
-
-// ─── Procedural fallback tree ───
-
-function buildFallbackTree(
+function buildTree(
     scene: Scene,
     x: number,
     z: number,
@@ -117,53 +64,150 @@ function buildFallbackTree(
     rand: () => number,
     shadow?: ShadowGenerator,
 ): void {
-    const parent = new TransformNode(`tree_fb_${index}`, scene);
+    const parent = new TransformNode(`tree${index}`, scene);
     parent.position.set(x, 0, z);
 
-    const trunkHeight = 2.0 + rand() * 2.5;
-    const trunkDiam = 0.2 + rand() * 0.15;
+    // Trunk — tapered, slightly curved via two stacked segments
+    const trunkHeight = 2.5 + rand() * 3.0;
+    const trunkDiam = 0.18 + rand() * 0.14;
+    const tiltX = (rand() - 0.5) * 0.06;
+    const tiltZ = (rand() - 0.5) * 0.06;
 
-    const trunk = MeshBuilder.CreateCylinder(
-        `trunk_fb_${index}`,
-        { height: trunkHeight, diameterTop: trunkDiam * 0.6, diameterBottom: trunkDiam, tessellation: 10 },
-        scene,
-    );
-    trunk.position.y = trunkHeight / 2;
-    trunk.parent = parent;
-    const trunkMat = new PBRMaterial(`trunkMat_fb_${index}`, scene);
-    trunkMat.albedoColor = new Color3(0.35 + rand() * 0.1, 0.22 + rand() * 0.05, 0.1);
-    trunkMat.roughness = 0.95;
-    trunkMat.metallic = 0;
-    trunk.material = trunkMat;
+    // Lower trunk
+    const lowerH = trunkHeight * 0.55;
+    const lower = MeshBuilder.CreateCylinder(`trunkLo${index}`, {
+        height: lowerH, diameterTop: trunkDiam * 0.78, diameterBottom: trunkDiam * 1.15, tessellation: 10,
+    }, scene);
+    lower.position.set(0, lowerH / 2, 0);
+    lower.parent = parent;
 
-    const clusterCount = 3 + Math.floor(rand() * 4);
-    const leafBaseY = trunkHeight * 0.75;
-    const canopyRadius = 1.0 + rand() * 1.2;
+    // Upper trunk (slight lean for natural look)
+    const upperH = trunkHeight * 0.5;
+    const upper = MeshBuilder.CreateCylinder(`trunkHi${index}`, {
+        height: upperH, diameterTop: trunkDiam * 0.45, diameterBottom: trunkDiam * 0.78, tessellation: 10,
+    }, scene);
+    upper.position.set(tiltX, lowerH + upperH / 2, tiltZ);
+    upper.parent = parent;
 
-    for (let c = 0; c < clusterCount; c++) {
-        const size = canopyRadius * (0.6 + rand() * 0.5);
-        const leaf = MeshBuilder.CreateSphere(`leaf_fb_${index}_${c}`, { diameter: size, segments: 8 }, scene);
-        leaf.position.set(
-            (rand() - 0.5) * canopyRadius * 0.8,
-            leafBaseY + rand() * canopyRadius * 0.7,
-            (rand() - 0.5) * canopyRadius * 0.8,
-        );
-        leaf.scaling.set(1 + rand() * 0.3, 0.6 + rand() * 0.4, 1 + rand() * 0.3);
-        leaf.parent = parent;
-        const leafMat = new PBRMaterial(`leafMat_fb_${index}_${c}`, scene);
-        leafMat.albedoColor = new Color3(0.08 + rand() * 0.12, 0.35 + rand() * 0.25, 0.05 + rand() * 0.08);
-        leafMat.roughness = 0.85;
-        leafMat.metallic = 0;
-        leaf.material = leafMat;
-        if (shadow) { shadow.addShadowCaster(leaf); leaf.receiveShadows = true; }
+    const barkShade = 0.28 + rand() * 0.12;
+    const trunkMat = pbrMat(scene, `bark${index}`,
+        new Color3(barkShade, barkShade * 0.65, barkShade * 0.35), 0.95);
+    lower.material = trunkMat;
+    upper.material = trunkMat;
+
+    // Root flare — wide, flat cylinder at base
+    const rootFlare = MeshBuilder.CreateCylinder(`rootFlare${index}`, {
+        height: 0.12, diameterTop: trunkDiam * 1.15, diameterBottom: trunkDiam * 1.6, tessellation: 8,
+    }, scene);
+    rootFlare.position.y = 0.06;
+    rootFlare.parent = parent;
+    rootFlare.material = trunkMat;
+
+    // Canopy — multiple overlapping spheres in layers
+    const canopyBaseY = trunkHeight * 0.65;
+    const canopyRadius = 1.2 + rand() * 1.6;
+    const layers = 2 + Math.floor(rand() * 2); // 2-3 vertical layers
+    const clustersPerLayer = 3 + Math.floor(rand() * 3); // 3-5 per layer
+
+    // Base green with per-tree variation
+    const baseG = 0.32 + rand() * 0.18;
+    const baseR = 0.06 + rand() * 0.08;
+    const baseB = 0.04 + rand() * 0.06;
+
+    for (let layer = 0; layer < layers; layer++) {
+        const layerY = canopyBaseY + layer * canopyRadius * 0.4;
+        const layerSpread = canopyRadius * (1 - layer * 0.2); // narrower higher up
+
+        for (let c = 0; c < clustersPerLayer; c++) {
+            const angle = (c / clustersPerLayer) * Math.PI * 2 + rand() * 0.5;
+            const dist = layerSpread * (0.2 + rand() * 0.5);
+            const size = canopyRadius * (0.45 + rand() * 0.4);
+
+            const leaf = MeshBuilder.CreateSphere(`leaf${index}_${layer}_${c}`, {
+                diameter: size, segments: 10,
+            }, scene);
+            leaf.position.set(
+                Math.cos(angle) * dist + tiltX * (layer + 1),
+                layerY + rand() * canopyRadius * 0.3,
+                Math.sin(angle) * dist + tiltZ * (layer + 1),
+            );
+            leaf.scaling.set(
+                0.9 + rand() * 0.3,
+                0.5 + rand() * 0.35,
+                0.9 + rand() * 0.3,
+            );
+            leaf.parent = parent;
+
+            // Subtle color variation per cluster
+            const leafMat = pbrMat(scene, `lf${index}_${layer}_${c}`,
+                new Color3(
+                    baseR + (rand() - 0.5) * 0.04,
+                    baseG + (rand() - 0.5) * 0.08,
+                    baseB + (rand() - 0.5) * 0.03,
+                ), 0.82);
+            leaf.material = leafMat;
+
+            if (shadow) { shadow.addShadowCaster(leaf); leaf.receiveShadows = true; }
+        }
     }
 
-    if (shadow) { shadow.addShadowCaster(trunk); trunk.receiveShadows = true; }
+    // Top cap sphere — gives a rounded crown
+    const topCap = MeshBuilder.CreateSphere(`topCap${index}`, {
+        diameter: canopyRadius * 0.7, segments: 10,
+    }, scene);
+    topCap.position.set(tiltX * 3, canopyBaseY + layers * canopyRadius * 0.4 + canopyRadius * 0.15, tiltZ * 3);
+    topCap.scaling.y = 0.5;
+    topCap.parent = parent;
+    topCap.material = pbrMat(scene, `topLf${index}`,
+        new Color3(baseR, baseG + 0.06, baseB), 0.82);
+    if (shadow) { shadow.addShadowCaster(topCap); topCap.receiveShadows = true; }
+
+    if (shadow) {
+        shadow.addShadowCaster(lower);
+        shadow.addShadowCaster(upper);
+        shadow.addShadowCaster(rootFlare);
+        lower.receiveShadows = true;
+        upper.receiveShadows = true;
+        rootFlare.receiveShadows = true;
+    }
 }
 
-// ─── Procedural fallback rock ───
+// ─── Bush builder ───
 
-function buildFallbackRock(
+function buildBush(
+    scene: Scene,
+    x: number,
+    z: number,
+    index: number,
+    rand: () => number,
+    shadow?: ShadowGenerator,
+): void {
+    const parent = new TransformNode(`bush${index}`, scene);
+    parent.position.set(x, 0, z);
+
+    const clusterCount = 3 + Math.floor(rand() * 3);
+    const bushSize = 0.3 + rand() * 0.5;
+    const g = 0.28 + rand() * 0.22;
+
+    for (let c = 0; c < clusterCount; c++) {
+        const s = bushSize * (0.6 + rand() * 0.5);
+        const sphere = MeshBuilder.CreateSphere(`bushLf${index}_${c}`, { diameter: s, segments: 8 }, scene);
+        sphere.position.set(
+            (rand() - 0.5) * bushSize * 0.8,
+            s * 0.35 + rand() * 0.1,
+            (rand() - 0.5) * bushSize * 0.8,
+        );
+        sphere.scaling.y = 0.55 + rand() * 0.3;
+        sphere.parent = parent;
+        sphere.material = pbrMat(scene, `bushMat${index}_${c}`,
+            new Color3(0.06 + rand() * 0.06, g + (rand() - 0.5) * 0.06, 0.04 + rand() * 0.04), 0.85);
+        if (shadow) { shadow.addShadowCaster(sphere); sphere.receiveShadows = true; }
+    }
+}
+
+// ─── Rock builder ───
+
+function buildRock(
     scene: Scene,
     x: number,
     z: number,
@@ -172,18 +216,81 @@ function buildFallbackRock(
     shadow?: ShadowGenerator,
 ): number {
     const size = 0.3 + rand() * 0.8;
-    const rock = MeshBuilder.CreateSphere(`rock_fb_${index}`, { diameter: size, segments: 6 }, scene);
-    rock.position.set(x, size * 0.25, z);
-    rock.scaling.set(0.8 + rand() * 0.5, 0.3 + rand() * 0.4, 0.8 + rand() * 0.5);
-    rock.rotation.y = rand() * Math.PI * 2;
-    const rockMat = new PBRMaterial(`rockMat_fb_${index}`, scene);
-    const shade = 0.3 + rand() * 0.2;
-    rockMat.albedoColor = new Color3(shade, shade * 0.95, shade * 0.9);
-    rockMat.roughness = 0.9;
-    rockMat.metallic = 0.05;
-    rock.material = rockMat;
-    if (shadow) { shadow.addShadowCaster(rock); rock.receiveShadows = true; }
+    const parent = new TransformNode(`rock${index}`, scene);
+    parent.position.set(x, 0, z);
+
+    // Main rock body
+    const main = MeshBuilder.CreateSphere(`rockMain${index}`, { diameter: size, segments: 7 }, scene);
+    main.position.y = size * 0.22;
+    main.scaling.set(0.8 + rand() * 0.5, 0.3 + rand() * 0.35, 0.8 + rand() * 0.5);
+    main.rotation.y = rand() * Math.PI * 2;
+    main.rotation.x = (rand() - 0.5) * 0.3;
+    main.parent = parent;
+
+    const shade = 0.35 + rand() * 0.2;
+    const rockMat = pbrMat(scene, `rockMat${index}`,
+        new Color3(shade, shade * 0.94, shade * 0.88), 0.88, 0.05);
+    main.material = rockMat;
+
+    // Add 1-2 smaller accent rocks for natural cluster
+    const accentCount = Math.floor(rand() * 2) + 1;
+    for (let a = 0; a < accentCount; a++) {
+        const as = size * (0.25 + rand() * 0.3);
+        const accent = MeshBuilder.CreateSphere(`rockAcc${index}_${a}`, { diameter: as, segments: 6 }, scene);
+        accent.position.set(
+            (rand() - 0.5) * size * 0.6,
+            as * 0.2,
+            (rand() - 0.5) * size * 0.6,
+        );
+        accent.scaling.set(0.7 + rand() * 0.5, 0.3 + rand() * 0.3, 0.7 + rand() * 0.5);
+        accent.rotation.y = rand() * Math.PI * 2;
+        accent.parent = parent;
+        accent.material = rockMat;
+        if (shadow) { shadow.addShadowCaster(accent); accent.receiveShadows = true; }
+    }
+
+    if (shadow) { shadow.addShadowCaster(main); main.receiveShadows = true; }
+
     return size > 0.7 ? size * 0.5 : 0;
+}
+
+// ─── Grass builder ───
+
+function buildGrass(
+    scene: Scene,
+    rand: () => number,
+    count: number,
+    shadow?: ShadowGenerator,
+): void {
+    const grassMat = pbrMat(scene, "grassMat", new Color3(0.16, 0.48, 0.10), 0.9);
+    grassMat.backFaceCulling = false;
+    const darkGrassMat = pbrMat(scene, "darkGrassMat", new Color3(0.10, 0.36, 0.07), 0.9);
+    darkGrassMat.backFaceCulling = false;
+    const yellowGrassMat = pbrMat(scene, "yellowGrassMat", new Color3(0.35, 0.42, 0.10), 0.9);
+    yellowGrassMat.backFaceCulling = false;
+
+    const mats = [grassMat, grassMat, grassMat, darkGrassMat, darkGrassMat, yellowGrassMat];
+
+    for (let i = 0; i < count; i++) {
+        const cx = (rand() - 0.5) * 190;
+        const cz = (rand() - 0.5) * 190;
+        const bladeCount = 5 + Math.floor(rand() * 7);
+
+        for (let b = 0; b < bladeCount; b++) {
+            const h = 0.10 + rand() * 0.28;
+            const w = 0.02 + rand() * 0.025;
+            const g = MeshBuilder.CreatePlane(`g${i}_${b}`, { width: w, height: h }, scene);
+            g.position.set(
+                cx + (rand() - 0.5) * 0.5,
+                h * 0.48,
+                cz + (rand() - 0.5) * 0.5,
+            );
+            g.rotation.y = rand() * Math.PI;
+            g.rotation.x = -0.1 + rand() * 0.2;
+            g.material = mats[Math.floor(rand() * mats.length)];
+            if (shadow) g.receiveShadows = true;
+        }
+    }
 }
 
 // ─── Insect builder (animated) ───
@@ -235,130 +342,54 @@ function buildInsect(
     };
 }
 
-// ─── Grass with PBR ───
-
-function buildGrass(
-    scene: Scene,
-    rand: () => number,
-    count: number,
-    bushTemplates: TransformNode[],
-    shadow?: ShadowGenerator,
-): void {
-    const grassMat = new PBRMaterial("grassMat", scene);
-    grassMat.albedoColor = new Color3(0.18, 0.5, 0.12);
-    grassMat.roughness = 0.9;
-    grassMat.metallic = 0;
-    grassMat.backFaceCulling = false;
-
-    const darkGrassMat = new PBRMaterial("darkGrassMat", scene);
-    darkGrassMat.albedoColor = new Color3(0.1, 0.38, 0.08);
-    darkGrassMat.roughness = 0.9;
-    darkGrassMat.metallic = 0;
-    darkGrassMat.backFaceCulling = false;
-
-    for (let i = 0; i < count; i++) {
-        const cx = (rand() - 0.5) * 190;
-        const cz = (rand() - 0.5) * 190;
-
-        // 30% chance to place a bush model instead of grass blades (if available)
-        if (bushTemplates.length > 0 && rand() < 0.3) {
-            const tmpl = bushTemplates[Math.floor(rand() * bushTemplates.length)];
-            const scale = 0.3 + rand() * 0.4;
-            placeClone(tmpl, `bush_clone_${i}`, cx, cz, scale, rand() * Math.PI * 2, shadow);
-            continue;
-        }
-
-        const bladeCount = 4 + Math.floor(rand() * 6);
-        for (let b = 0; b < bladeCount; b++) {
-            const g = MeshBuilder.CreatePlane(
-                `grass${i}_${b}`,
-                { width: 0.04 + rand() * 0.03, height: 0.12 + rand() * 0.25 },
-                scene,
-            );
-            g.position.set(
-                cx + (rand() - 0.5) * 0.4,
-                0.06 + rand() * 0.12,
-                cz + (rand() - 0.5) * 0.4,
-            );
-            g.rotation.y = rand() * Math.PI;
-            g.rotation.x = -0.15 + rand() * 0.3;
-            g.material = rand() > 0.4 ? grassMat : darkGrassMat;
-            if (shadow) g.receiveShadows = true;
-        }
-    }
-}
-
 // ─── Main builder ───
 
-export async function buildWorld(
+export function buildWorld(
     scene: Scene,
     shadow?: ShadowGenerator,
-): Promise<WorldBuildResult & { insects: InsectData[] }> {
+): WorldBuildResult & { insects: InsectData[] } {
     const rand = mulberry32(42);
 
     // ── Ground ──
     const ground = MeshBuilder.CreateGround("ground", { width: 200, height: 200, subdivisions: 60 }, scene);
-    const groundMat = new PBRMaterial("groundMat", scene);
-    groundMat.albedoColor = new Color3(0.25, 0.48, 0.18);
-    groundMat.roughness = 0.92;
-    groundMat.metallic = 0;
+    const groundMat = pbrMat(scene, "groundMat", new Color3(0.24, 0.46, 0.17), 0.92);
     groundMat.environmentIntensity = 0.4;
     ground.material = groundMat;
     ground.receiveShadows = true;
 
-    // ── Load GLB templates from Babylon.js CDN (in parallel) ──
-    const [treeTemplates, bushTemplates, rockTemplates] = await Promise.all([
-        Promise.all(TREE_MODELS.map((url, i) => loadTemplate(scene, url, `tree${i}`))),
-        Promise.all(BUSH_MODELS.map((url, i) => loadTemplate(scene, url, `bush${i}`))),
-        Promise.all(ROCK_MODELS.map((url, i) => loadTemplate(scene, url, `rock${i}`))),
-    ]);
-
-    const validTrees = treeTemplates.filter((t): t is TransformNode => t !== null);
-    const validBushes = bushTemplates.filter((t): t is TransformNode => t !== null);
-    const validRocks = rockTemplates.filter((t): t is TransformNode => t !== null);
-
     const colliders: Collider[] = [];
 
-    // ── Trees (30) — GLB clones or procedural fallback ──
+    // ── Trees (35) ──
     const TREE_COLLISION_RADIUS = 0.6;
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 35; i++) {
         const x = (rand() - 0.5) * 160;
         const z = (rand() - 0.5) * 160;
         if (Math.abs(x) < 6 && Math.abs(z) < 6) continue;
-
-        if (validTrees.length > 0) {
-            const tmpl = validTrees[Math.floor(rand() * validTrees.length)];
-            const scale = 0.8 + rand() * 0.8; // 0.8 – 1.6
-            placeClone(tmpl, `tree_clone_${i}`, x, z, scale, rand() * Math.PI * 2, shadow);
-        } else {
-            buildFallbackTree(scene, x, z, i, rand, shadow);
-        }
+        buildTree(scene, x, z, i, rand, shadow);
         colliders.push({ x, z, radius: TREE_COLLISION_RADIUS });
     }
 
-    // ── Rocks (60) — GLB clones or procedural fallback ──
-    for (let i = 0; i < 60; i++) {
+    // ── Bushes (40) ──
+    for (let i = 0; i < 40; i++) {
+        const x = (rand() - 0.5) * 170;
+        const z = (rand() - 0.5) * 170;
+        if (Math.abs(x) < 4 && Math.abs(z) < 4) continue;
+        buildBush(scene, x, z, i, rand, shadow);
+    }
+
+    // ── Rocks (50) ──
+    for (let i = 0; i < 50; i++) {
         const x = (rand() - 0.5) * 180;
         const z = (rand() - 0.5) * 180;
         if (Math.abs(x) < 4 && Math.abs(z) < 4) continue;
-
-        if (validRocks.length > 0) {
-            const tmpl = validRocks[Math.floor(rand() * validRocks.length)];
-            const scale = 0.4 + rand() * 0.8;
-            placeClone(tmpl, `rock_clone_${i}`, x, z, scale, rand() * Math.PI * 2, shadow);
-            if (scale > 0.7) {
-                colliders.push({ x, z, radius: scale * 0.4 });
-            }
-        } else {
-            const collisionRadius = buildFallbackRock(scene, x, z, i, rand, shadow);
-            if (collisionRadius > 0) {
-                colliders.push({ x, z, radius: collisionRadius });
-            }
+        const collisionRadius = buildRock(scene, x, z, i, rand, shadow);
+        if (collisionRadius > 0) {
+            colliders.push({ x, z, radius: collisionRadius });
         }
     }
 
-    // ── Grass & bushes (250 clusters) ──
-    buildGrass(scene, rand, 250, validBushes, shadow);
+    // ── Grass (300 clusters) ──
+    buildGrass(scene, rand, 300, shadow);
 
     // ── Insects (15) ──
     const insects: InsectData[] = [];

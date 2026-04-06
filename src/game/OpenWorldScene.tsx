@@ -128,13 +128,8 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             shadowGen.useBlurExponentialShadowMap = true;
             shadowGen.blurKernel = 32;
 
-            // ── World (async — loads GLB assets from Babylon.js CDN) ──
-            let colliders: import("@/game/worldBuilder").Collider[] = [];
-            let insects: import("@/game/worldBuilder").InsectData[] = [];
-            buildWorld(scene, shadowGen).then((world) => {
-                colliders = world.colliders;
-                insects = world.insects;
-            });
+            // ── World ──
+            const { colliders, insects } = buildWorld(scene, shadowGen);
 
             // ── Player ──
             const rig = buildAvatar(scene, walletAddress, shadowGen);
