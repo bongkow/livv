@@ -1,25 +1,22 @@
 /*
  * @Module: worldBuilder
- * @Purpose: Build the ground terrain with natural elements — rocks, grass tufts, insects
- * @Logic: Creates a textured ground, scatters trees/rocks/grass procedurally,
- *         and adds small animated insects for life.
- *         Uses thin instances for grass/rocks/trees to minimize draw calls.
- *         Uses PBR materials for physically-based lighting.
- * @Interfaces: buildWorld(scene, shadowGen?) → { ground, colliders, insects }
+ * @Purpose: Build realistic ground terrain with trees, rocks, grass, and insects
+ * @Logic: Creates PBR-shaded procedural terrain with multi-layer tree canopies,
+ *         natural rock formations, dense grass, and animated insects.
+ * @Interfaces: buildWorld(scene, shadow?) → WorldBuildResult
+ * @Constraints: Requires @babylonjs/core
  */
 
 import {
     Scene,
     MeshBuilder,
+    StandardMaterial,
     PBRMaterial,
     Color3,
     Mesh,
     TransformNode,
     Vector3,
-    Matrix,
-    Quaternion,
     ShadowGenerator,
-    CascadedShadowGenerator,
 } from "@babylonjs/core";
 
 // ─── Types ───
@@ -47,56 +44,258 @@ function mulberry32(seed: number) {
     };
 }
 
-// ─── PBR Materials ───
+// ─── Shared PBR material factory ───
 
-function createMaterials(scene: Scene) {
-    const trunk = new PBRMaterial("treeTrunk", scene);
-    trunk.albedoColor = new Color3(0.4, 0.25, 0.13);
-    trunk.metallic = 0.0;
-    trunk.roughness = 0.9;
-
-    const leaf = new PBRMaterial("treeLeaf", scene);
-    leaf.albedoColor = new Color3(0.15, 0.5, 0.15);
-    leaf.metallic = 0.0;
-    leaf.roughness = 0.7;
-
-    const rock = new PBRMaterial("rockMat", scene);
-    rock.albedoColor = new Color3(0.45, 0.42, 0.38);
-    rock.metallic = 0.0;
-    rock.roughness = 0.85;
-
-    const darkRock = new PBRMaterial("darkRockMat", scene);
-    darkRock.albedoColor = new Color3(0.3, 0.28, 0.25);
-    darkRock.metallic = 0.0;
-    darkRock.roughness = 0.9;
-
-    const grassBlade = new PBRMaterial("grassBladeMat", scene);
-    grassBlade.albedoColor = new Color3(0.2, 0.55, 0.15);
-    grassBlade.metallic = 0.0;
-    grassBlade.roughness = 0.6;
-
-    const darkGrass = new PBRMaterial("darkGrassMat", scene);
-    darkGrass.albedoColor = new Color3(0.12, 0.4, 0.1);
-    darkGrass.metallic = 0.0;
-    darkGrass.roughness = 0.65;
-
-    const insectMat = new PBRMaterial("insectMat", scene);
-    insectMat.albedoColor = new Color3(0.1, 0.1, 0.1);
-    insectMat.metallic = 0.3;
-    insectMat.roughness = 0.4;
-
-    const wingMat = new PBRMaterial("wingMat", scene);
-    wingMat.albedoColor = new Color3(0.7, 0.7, 0.7);
-    wingMat.alpha = 0.4;
-    wingMat.metallic = 0.0;
-    wingMat.roughness = 0.2;
-
-    return { trunk, leaf, rock, darkRock, grassBlade, darkGrass, insectMat, wingMat };
+function pbrMat(scene: Scene, name: string, albedo: Color3, roughness: number, metallic = 0): PBRMaterial {
+    const mat = new PBRMaterial(name, scene);
+    mat.albedoColor = albedo;
+    mat.roughness = roughness;
+    mat.metallic = metallic;
+    return mat;
 }
 
-// ─── Insect builder (animated — kept as individual meshes) ───
+// ─── Tree builder ───
 
-interface InsectData {
+function buildTree(
+    scene: Scene,
+    x: number,
+    z: number,
+    index: number,
+    rand: () => number,
+    shadow?: ShadowGenerator,
+): void {
+    const parent = new TransformNode(`tree${index}`, scene);
+    parent.position.set(x, 0, z);
+
+    // Trunk — tapered, slightly curved via two stacked segments
+    const trunkHeight = 2.5 + rand() * 3.0;
+    const trunkDiam = 0.18 + rand() * 0.14;
+    const tiltX = (rand() - 0.5) * 0.06;
+    const tiltZ = (rand() - 0.5) * 0.06;
+
+    // Lower trunk
+    const lowerH = trunkHeight * 0.55;
+    const lower = MeshBuilder.CreateCylinder(`trunkLo${index}`, {
+        height: lowerH, diameterTop: trunkDiam * 0.78, diameterBottom: trunkDiam * 1.15, tessellation: 10,
+    }, scene);
+    lower.position.set(0, lowerH / 2, 0);
+    lower.parent = parent;
+
+    // Upper trunk (slight lean for natural look)
+    const upperH = trunkHeight * 0.5;
+    const upper = MeshBuilder.CreateCylinder(`trunkHi${index}`, {
+        height: upperH, diameterTop: trunkDiam * 0.45, diameterBottom: trunkDiam * 0.78, tessellation: 10,
+    }, scene);
+    upper.position.set(tiltX, lowerH + upperH / 2, tiltZ);
+    upper.parent = parent;
+
+    const barkShade = 0.28 + rand() * 0.12;
+    const trunkMat = pbrMat(scene, `bark${index}`,
+        new Color3(barkShade, barkShade * 0.65, barkShade * 0.35), 0.95);
+    lower.material = trunkMat;
+    upper.material = trunkMat;
+
+    // Root flare — wide, flat cylinder at base
+    const rootFlare = MeshBuilder.CreateCylinder(`rootFlare${index}`, {
+        height: 0.12, diameterTop: trunkDiam * 1.15, diameterBottom: trunkDiam * 1.6, tessellation: 8,
+    }, scene);
+    rootFlare.position.y = 0.06;
+    rootFlare.parent = parent;
+    rootFlare.material = trunkMat;
+
+    // Canopy — multiple overlapping spheres in layers
+    const canopyBaseY = trunkHeight * 0.65;
+    const canopyRadius = 1.2 + rand() * 1.6;
+    const layers = 2 + Math.floor(rand() * 2); // 2-3 vertical layers
+    const clustersPerLayer = 3 + Math.floor(rand() * 3); // 3-5 per layer
+
+    // Base green with per-tree variation
+    const baseG = 0.32 + rand() * 0.18;
+    const baseR = 0.06 + rand() * 0.08;
+    const baseB = 0.04 + rand() * 0.06;
+
+    for (let layer = 0; layer < layers; layer++) {
+        const layerY = canopyBaseY + layer * canopyRadius * 0.4;
+        const layerSpread = canopyRadius * (1 - layer * 0.2); // narrower higher up
+
+        for (let c = 0; c < clustersPerLayer; c++) {
+            const angle = (c / clustersPerLayer) * Math.PI * 2 + rand() * 0.5;
+            const dist = layerSpread * (0.2 + rand() * 0.5);
+            const size = canopyRadius * (0.45 + rand() * 0.4);
+
+            const leaf = MeshBuilder.CreateSphere(`leaf${index}_${layer}_${c}`, {
+                diameter: size, segments: 10,
+            }, scene);
+            leaf.position.set(
+                Math.cos(angle) * dist + tiltX * (layer + 1),
+                layerY + rand() * canopyRadius * 0.3,
+                Math.sin(angle) * dist + tiltZ * (layer + 1),
+            );
+            leaf.scaling.set(
+                0.9 + rand() * 0.3,
+                0.5 + rand() * 0.35,
+                0.9 + rand() * 0.3,
+            );
+            leaf.parent = parent;
+
+            // Subtle color variation per cluster
+            const leafMat = pbrMat(scene, `lf${index}_${layer}_${c}`,
+                new Color3(
+                    baseR + (rand() - 0.5) * 0.04,
+                    baseG + (rand() - 0.5) * 0.08,
+                    baseB + (rand() - 0.5) * 0.03,
+                ), 0.82);
+            leaf.material = leafMat;
+
+            if (shadow) { shadow.addShadowCaster(leaf); leaf.receiveShadows = true; }
+        }
+    }
+
+    // Top cap sphere — gives a rounded crown
+    const topCap = MeshBuilder.CreateSphere(`topCap${index}`, {
+        diameter: canopyRadius * 0.7, segments: 10,
+    }, scene);
+    topCap.position.set(tiltX * 3, canopyBaseY + layers * canopyRadius * 0.4 + canopyRadius * 0.15, tiltZ * 3);
+    topCap.scaling.y = 0.5;
+    topCap.parent = parent;
+    topCap.material = pbrMat(scene, `topLf${index}`,
+        new Color3(baseR, baseG + 0.06, baseB), 0.82);
+    if (shadow) { shadow.addShadowCaster(topCap); topCap.receiveShadows = true; }
+
+    if (shadow) {
+        shadow.addShadowCaster(lower);
+        shadow.addShadowCaster(upper);
+        shadow.addShadowCaster(rootFlare);
+        lower.receiveShadows = true;
+        upper.receiveShadows = true;
+        rootFlare.receiveShadows = true;
+    }
+}
+
+// ─── Bush builder ───
+
+function buildBush(
+    scene: Scene,
+    x: number,
+    z: number,
+    index: number,
+    rand: () => number,
+    shadow?: ShadowGenerator,
+): void {
+    const parent = new TransformNode(`bush${index}`, scene);
+    parent.position.set(x, 0, z);
+
+    const clusterCount = 3 + Math.floor(rand() * 3);
+    const bushSize = 0.3 + rand() * 0.5;
+    const g = 0.28 + rand() * 0.22;
+
+    for (let c = 0; c < clusterCount; c++) {
+        const s = bushSize * (0.6 + rand() * 0.5);
+        const sphere = MeshBuilder.CreateSphere(`bushLf${index}_${c}`, { diameter: s, segments: 8 }, scene);
+        sphere.position.set(
+            (rand() - 0.5) * bushSize * 0.8,
+            s * 0.35 + rand() * 0.1,
+            (rand() - 0.5) * bushSize * 0.8,
+        );
+        sphere.scaling.y = 0.55 + rand() * 0.3;
+        sphere.parent = parent;
+        sphere.material = pbrMat(scene, `bushMat${index}_${c}`,
+            new Color3(0.06 + rand() * 0.06, g + (rand() - 0.5) * 0.06, 0.04 + rand() * 0.04), 0.85);
+        if (shadow) { shadow.addShadowCaster(sphere); sphere.receiveShadows = true; }
+    }
+}
+
+// ─── Rock builder ───
+
+function buildRock(
+    scene: Scene,
+    x: number,
+    z: number,
+    index: number,
+    rand: () => number,
+    shadow?: ShadowGenerator,
+): number {
+    const size = 0.3 + rand() * 0.8;
+    const parent = new TransformNode(`rock${index}`, scene);
+    parent.position.set(x, 0, z);
+
+    // Main rock body
+    const main = MeshBuilder.CreateSphere(`rockMain${index}`, { diameter: size, segments: 7 }, scene);
+    main.position.y = size * 0.22;
+    main.scaling.set(0.8 + rand() * 0.5, 0.3 + rand() * 0.35, 0.8 + rand() * 0.5);
+    main.rotation.y = rand() * Math.PI * 2;
+    main.rotation.x = (rand() - 0.5) * 0.3;
+    main.parent = parent;
+
+    const shade = 0.35 + rand() * 0.2;
+    const rockMat = pbrMat(scene, `rockMat${index}`,
+        new Color3(shade, shade * 0.94, shade * 0.88), 0.88, 0.05);
+    main.material = rockMat;
+
+    // Add 1-2 smaller accent rocks for natural cluster
+    const accentCount = Math.floor(rand() * 2) + 1;
+    for (let a = 0; a < accentCount; a++) {
+        const as = size * (0.25 + rand() * 0.3);
+        const accent = MeshBuilder.CreateSphere(`rockAcc${index}_${a}`, { diameter: as, segments: 6 }, scene);
+        accent.position.set(
+            (rand() - 0.5) * size * 0.6,
+            as * 0.2,
+            (rand() - 0.5) * size * 0.6,
+        );
+        accent.scaling.set(0.7 + rand() * 0.5, 0.3 + rand() * 0.3, 0.7 + rand() * 0.5);
+        accent.rotation.y = rand() * Math.PI * 2;
+        accent.parent = parent;
+        accent.material = rockMat;
+        if (shadow) { shadow.addShadowCaster(accent); accent.receiveShadows = true; }
+    }
+
+    if (shadow) { shadow.addShadowCaster(main); main.receiveShadows = true; }
+
+    return size > 0.7 ? size * 0.5 : 0;
+}
+
+// ─── Grass builder ───
+
+function buildGrass(
+    scene: Scene,
+    rand: () => number,
+    count: number,
+    shadow?: ShadowGenerator,
+): void {
+    const grassMat = pbrMat(scene, "grassMat", new Color3(0.16, 0.48, 0.10), 0.9);
+    grassMat.backFaceCulling = false;
+    const darkGrassMat = pbrMat(scene, "darkGrassMat", new Color3(0.10, 0.36, 0.07), 0.9);
+    darkGrassMat.backFaceCulling = false;
+    const yellowGrassMat = pbrMat(scene, "yellowGrassMat", new Color3(0.35, 0.42, 0.10), 0.9);
+    yellowGrassMat.backFaceCulling = false;
+
+    const mats = [grassMat, grassMat, grassMat, darkGrassMat, darkGrassMat, yellowGrassMat];
+
+    for (let i = 0; i < count; i++) {
+        const cx = (rand() - 0.5) * 190;
+        const cz = (rand() - 0.5) * 190;
+        const bladeCount = 5 + Math.floor(rand() * 7);
+
+        for (let b = 0; b < bladeCount; b++) {
+            const h = 0.10 + rand() * 0.28;
+            const w = 0.02 + rand() * 0.025;
+            const g = MeshBuilder.CreatePlane(`g${i}_${b}`, { width: w, height: h }, scene);
+            g.position.set(
+                cx + (rand() - 0.5) * 0.5,
+                h * 0.48,
+                cz + (rand() - 0.5) * 0.5,
+            );
+            g.rotation.y = rand() * Math.PI;
+            g.rotation.x = -0.1 + rand() * 0.2;
+            g.material = mats[Math.floor(rand() * mats.length)];
+            if (shadow) g.receiveShadows = true;
+        }
+    }
+}
+
+// ─── Insect builder (animated) ───
+
+export interface InsectData {
     node: TransformNode;
     centerX: number;
     centerZ: number;
@@ -112,34 +311,30 @@ function buildInsect(
     z: number,
     index: number,
     rand: () => number,
-    mats: ReturnType<typeof createMaterials>,
 ): InsectData {
     const node = new TransformNode(`insect${index}`, scene);
 
-    const body = MeshBuilder.CreateSphere(
-        `insectBody${index}`,
-        { diameter: 0.04, segments: 4 },
-        scene,
-    );
+    const body = MeshBuilder.CreateSphere(`insectBody${index}`, { diameter: 0.04, segments: 4 }, scene);
     body.parent = node;
-    body.material = mats.insectMat;
+    const insectMat = new StandardMaterial(`insectMat${index}`, scene);
+    insectMat.diffuseColor = new Color3(0.1, 0.1, 0.1);
+    insectMat.specularColor = Color3.Black();
+    body.material = insectMat;
 
     for (let w = 0; w < 2; w++) {
-        const wing = MeshBuilder.CreatePlane(
-            `insectWing${index}_${w}`,
-            { width: 0.04, height: 0.02 },
-            scene,
-        );
+        const wing = MeshBuilder.CreatePlane(`insectWing${index}_${w}`, { width: 0.04, height: 0.02 }, scene);
         wing.parent = node;
         wing.position.x = w === 0 ? -0.025 : 0.025;
         wing.position.y = 0.01;
-        wing.material = mats.wingMat;
+        const wingMat = new StandardMaterial(`wingMat${index}_${w}`, scene);
+        wingMat.diffuseColor = new Color3(0.7, 0.7, 0.7);
+        wingMat.alpha = 0.4;
+        wing.material = wingMat;
     }
 
     return {
         node,
-        centerX: x,
-        centerZ: z,
+        centerX: x, centerZ: z,
         radius: 0.5 + rand() * 2,
         speed: 1.5 + rand() * 2,
         phase: rand() * Math.PI * 2,
@@ -151,219 +346,57 @@ function buildInsect(
 
 export function buildWorld(
     scene: Scene,
-    shadowGen?: ShadowGenerator | CascadedShadowGenerator,
+    shadow?: ShadowGenerator,
 ): WorldBuildResult & { insects: InsectData[] } {
-    const rand = mulberry32(42); // deterministic seed
+    const rand = mulberry32(42);
 
     // ── Ground ──
-    const ground = MeshBuilder.CreateGround(
-        "ground",
-        { width: 200, height: 200, subdivisions: 40 },
-        scene,
-    );
-    const groundMat = new PBRMaterial("groundMat", scene);
-    groundMat.albedoColor = new Color3(0.28, 0.55, 0.22);
-    groundMat.metallic = 0.0;
-    groundMat.roughness = 0.85;
+    const ground = MeshBuilder.CreateGround("ground", { width: 200, height: 200, subdivisions: 60 }, scene);
+    const groundMat = pbrMat(scene, "groundMat", new Color3(0.24, 0.46, 0.17), 0.92);
+    groundMat.environmentIntensity = 0.4;
     ground.material = groundMat;
     ground.receiveShadows = true;
 
-    const mats = createMaterials(scene);
     const colliders: Collider[] = [];
 
-    // ── Trees (thin instances) ──
-    const DEFAULT_TRUNK_HEIGHT = 1;
-    const DEFAULT_TRUNK_DIAM = 0.3;
-    const masterTrunk = MeshBuilder.CreateCylinder(
-        "masterTrunk",
-        { height: DEFAULT_TRUNK_HEIGHT, diameter: DEFAULT_TRUNK_DIAM, tessellation: 8 },
-        scene,
-    );
-    masterTrunk.material = mats.trunk;
-    masterTrunk.isVisible = false; // hidden until thin instances are added
-
-    const DEFAULT_LEAF_DIAM = 1;
-    const masterLeaf = MeshBuilder.CreateSphere(
-        "masterLeaf",
-        { diameter: DEFAULT_LEAF_DIAM, segments: 8 },
-        scene,
-    );
-    masterLeaf.material = mats.leaf;
-    masterLeaf.isVisible = false;
-
+    // ── Trees (35) ──
     const TREE_COLLISION_RADIUS = 0.6;
-    const identityQuat = Quaternion.Identity();
-
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 35; i++) {
         const x = (rand() - 0.5) * 160;
         const z = (rand() - 0.5) * 160;
-        if (Math.abs(x) < 6 && Math.abs(z) < 6) {
-            // Consume the same random calls to keep determinism
-            rand(); rand(); rand();
-            continue;
-        }
-
-        const heightVariation = 1.5 + rand() * 1.5;
-        const leafSize = 1.8 + rand() * 1.5;
-        const trunkDiam = 0.3 + rand() * 0.2;
-
-        // Trunk: scale to match varied height & diameter
-        const trunkScaleX = trunkDiam / DEFAULT_TRUNK_DIAM;
-        const trunkScaleY = heightVariation / DEFAULT_TRUNK_HEIGHT;
-        const trunkScaleZ = trunkScaleX;
-        const trunkMatrix = Matrix.Compose(
-            new Vector3(trunkScaleX, trunkScaleY, trunkScaleZ),
-            identityQuat,
-            new Vector3(x, heightVariation / 2, z),
-        );
-        masterTrunk.thinInstanceAdd(trunkMatrix);
-
-        // Leaves: scale to match varied size, with squash
-        const leafSquash = 0.7 + rand() * 0.3;
-        const leafScaleXZ = leafSize / DEFAULT_LEAF_DIAM;
-        const leafScaleY = leafSquash * leafSize / DEFAULT_LEAF_DIAM;
-        const leafMatrix = Matrix.Compose(
-            new Vector3(leafScaleXZ, leafScaleY, leafScaleXZ),
-            identityQuat,
-            new Vector3(x, heightVariation + leafSize * 0.35, z),
-        );
-        masterLeaf.thinInstanceAdd(leafMatrix);
-
+        if (Math.abs(x) < 6 && Math.abs(z) < 6) continue;
+        buildTree(scene, x, z, i, rand, shadow);
         colliders.push({ x, z, radius: TREE_COLLISION_RADIUS });
     }
 
-    masterTrunk.isVisible = true;
-    masterLeaf.isVisible = true;
-    masterTrunk.thinInstanceRefreshBoundingInfo();
-    masterLeaf.thinInstanceRefreshBoundingInfo();
-
-    if (shadowGen) {
-        shadowGen.addShadowCaster(masterTrunk);
-        shadowGen.addShadowCaster(masterLeaf);
+    // ── Bushes (40) ──
+    for (let i = 0; i < 40; i++) {
+        const x = (rand() - 0.5) * 170;
+        const z = (rand() - 0.5) * 170;
+        if (Math.abs(x) < 4 && Math.abs(z) < 4) continue;
+        buildBush(scene, x, z, i, rand, shadow);
     }
 
-    // ── Rocks (thin instances, 2 material groups) ──
-    const DEFAULT_ROCK_DIAM = 1;
-    const masterRock = MeshBuilder.CreateSphere(
-        "masterRock",
-        { diameter: DEFAULT_ROCK_DIAM, segments: 6 },
-        scene,
-    );
-    masterRock.material = mats.rock;
-    masterRock.isVisible = false;
-
-    const masterDarkRock = MeshBuilder.CreateSphere(
-        "masterDarkRock",
-        { diameter: DEFAULT_ROCK_DIAM, segments: 6 },
-        scene,
-    );
-    masterDarkRock.material = mats.darkRock;
-    masterDarkRock.isVisible = false;
-
-    for (let i = 0; i < 60; i++) {
+    // ── Rocks (50) ──
+    for (let i = 0; i < 50; i++) {
         const x = (rand() - 0.5) * 180;
         const z = (rand() - 0.5) * 180;
-        if (Math.abs(x) < 4 && Math.abs(z) < 4) {
-            // Consume random calls for determinism
-            rand(); rand(); rand(); rand(); rand();
-            continue;
-        }
-
-        const size = 0.3 + rand() * 0.8;
-        const scaleX = (0.8 + rand() * 0.5) * size;
-        const scaleY = (0.4 + rand() * 0.4) * size;
-        const scaleZ = (0.8 + rand() * 0.5) * size;
-        const rotY = rand() * Math.PI * 2;
-        const isDark = rand() > 0.5;
-
-        const rotQuat = Quaternion.FromEulerAngles(0, rotY, 0);
-        const matrix = Matrix.Compose(
-            new Vector3(scaleX, scaleY, scaleZ),
-            rotQuat,
-            new Vector3(x, size * 0.3, z),
-        );
-
-        if (isDark) {
-            masterDarkRock.thinInstanceAdd(matrix);
-        } else {
-            masterRock.thinInstanceAdd(matrix);
-        }
-
-        if (size > 0.7) {
-            colliders.push({ x, z, radius: size * 0.5 });
+        if (Math.abs(x) < 4 && Math.abs(z) < 4) continue;
+        const collisionRadius = buildRock(scene, x, z, i, rand, shadow);
+        if (collisionRadius > 0) {
+            colliders.push({ x, z, radius: collisionRadius });
         }
     }
 
-    masterRock.isVisible = true;
-    masterDarkRock.isVisible = true;
-    masterRock.thinInstanceRefreshBoundingInfo();
-    masterDarkRock.thinInstanceRefreshBoundingInfo();
+    // ── Grass (300 clusters) ──
+    buildGrass(scene, rand, 300, shadow);
 
-    if (shadowGen) {
-        shadowGen.addShadowCaster(masterRock);
-        shadowGen.addShadowCaster(masterDarkRock);
-    }
-
-    // ── Grass (thin instances, 2 material groups) ──
-    const masterGrass = MeshBuilder.CreatePlane(
-        "masterGrass",
-        { width: 0.05, height: 0.25 },
-        scene,
-    );
-    masterGrass.material = mats.grassBlade;
-    masterGrass.isVisible = false;
-
-    const masterDarkGrass = MeshBuilder.CreatePlane(
-        "masterDarkGrass",
-        { width: 0.05, height: 0.25 },
-        scene,
-    );
-    masterDarkGrass.material = mats.darkGrass;
-    masterDarkGrass.isVisible = false;
-
-    const DEFAULT_BLADE_HEIGHT = 0.25;
-
-    for (let i = 0; i < 200; i++) {
-        const x = (rand() - 0.5) * 190;
-        const z = (rand() - 0.5) * 190;
-
-        const bladeCount = 3 + Math.floor(rand() * 5);
-        for (let b = 0; b < bladeCount; b++) {
-            const bladeHeight = 0.15 + rand() * 0.2;
-            const bx = x + (rand() - 0.5) * 0.3;
-            const by = 0.1 + rand() * 0.05;
-            const bz = z + (rand() - 0.5) * 0.3;
-            const rotYVal = rand() * Math.PI;
-            const rotXVal = -0.1 + rand() * 0.2;
-            const isDark = rand() <= 0.4;
-
-            const heightScale = bladeHeight / DEFAULT_BLADE_HEIGHT;
-            const rotQuat = Quaternion.FromEulerAngles(rotXVal, rotYVal, 0);
-            const matrix = Matrix.Compose(
-                new Vector3(1, heightScale, 1),
-                rotQuat,
-                new Vector3(bx, by, bz),
-            );
-
-            if (isDark) {
-                masterDarkGrass.thinInstanceAdd(matrix);
-            } else {
-                masterGrass.thinInstanceAdd(matrix);
-            }
-        }
-    }
-
-    masterGrass.isVisible = true;
-    masterDarkGrass.isVisible = true;
-    masterGrass.thinInstanceRefreshBoundingInfo();
-    masterDarkGrass.thinInstanceRefreshBoundingInfo();
-
-    // ── Insects (15, individual meshes for per-frame animation) ──
+    // ── Insects (15) ──
     const insects: InsectData[] = [];
     for (let i = 0; i < 15; i++) {
         const x = (rand() - 0.5) * 140;
         const z = (rand() - 0.5) * 140;
-        insects.push(buildInsect(scene, x, z, i, rand, mats));
+        insects.push(buildInsect(scene, x, z, i, rand));
     }
 
     return { ground, colliders, insects };

@@ -75,17 +75,17 @@ export default function Avatar3D({ address, size = 200, interactive = false, fac
             const hemi = new HemisphericLight("hemi", new Vector3(0, 1, 0.3), scene);
             hemi.intensity = 1.0;
 
-            // ── Build avatar ──
-            const rig = buildAvatar(scene, address);
-
-            // ── Slow idle rotation (disabled when interactive or faceOnly) ──
-            if (!interactive && !faceOnly) {
-                let angle = 0;
-                scene.onBeforeRenderObservable.add(() => {
-                    angle += 0.005;
-                    rig.root.rotation.y = angle;
-                });
-            }
+            // ── Build avatar (async — loads GLB) ──
+            buildAvatar(scene, address).then((rig) => {
+                // ── Slow idle rotation (disabled when interactive or faceOnly) ──
+                if (!interactive && !faceOnly) {
+                    let angle = 0;
+                    scene.onBeforeRenderObservable.add(() => {
+                        angle += 0.005;
+                        rig.root.rotation.y = angle;
+                    });
+                }
+            });
 
             // ── Render loop ──
             engine.runRenderLoop(() => scene.render());

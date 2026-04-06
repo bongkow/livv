@@ -11,12 +11,12 @@ import {
     Vector3,
     Color3,
     Color4,
-    CascadedShadowGenerator,
-    DefaultRenderingPipeline,
-    SSAO2RenderingPipeline,
+    MeshBuilder,
+    StandardMaterial,
+    ShadowGenerator,
+    Mesh,
 } from "@babylonjs/core";
-import { WebGPUEngine } from "@babylonjs/core/Engines/webgpuEngine";
-import { buildAvatar, buildAddressLabel, clearMaterialCache } from "@/game/avatarBuilder";
+import { buildAvatar, buildAddressLabel, blendWalkAnimation } from "@/game/avatarBuilder";
 import type { AvatarRig } from "@/game/avatarBuilder";
 import { useGamePresenceStore } from "@/stores/useGamePresenceStore";
 import { useWebSocketStore } from "@/stores/useWebSocketStore";
@@ -30,12 +30,14 @@ const AvatarDetailPanel = dynamic(() => import("@/components/AvatarDetailPanel")
 import type { Collider } from "@/game/worldBuilder";
 import { buildWorld, animateInsects } from "@/game/worldBuilder";
 
-const WORLD_HALF = 98;
+const WORLD_HALF = 98; // world boundary (ground is 200×200, keep 2 units of margin)
 const PLAYER_RADIUS = 0.3;
 
 function isPositionBlocked(x: number, z: number, colliders: Collider[]): boolean {
+    // World boundary check
     if (Math.abs(x) > WORLD_HALF || Math.abs(z) > WORLD_HALF) return true;
 
+    // Object collision check (circle vs circle in XZ)
     for (const c of colliders) {
         const dx = x - c.x;
         const dz = z - c.z;
@@ -43,50 +45,6 @@ function isPositionBlocked(x: number, z: number, colliders: Collider[]): boolean
         if (dx * dx + dz * dz < minDist * minDist) return true;
     }
     return false;
-}
-
-// ─── Walk animation helper ───
-
-function animateWalkCycle(rig: AvatarRig, walkPhase: number, intensity: number) {
-    const LEG_SWING = 0.45;
-    const ARM_SWING = 0.35;
-    const HEAD_BOB = 0.015;
-    const BODY_BOB = 0.02;
-
-    const t = intensity;
-
-    rig.leftLegPivot.rotation.x = Math.sin(walkPhase) * LEG_SWING * t;
-    rig.rightLegPivot.rotation.x = Math.sin(walkPhase + Math.PI) * LEG_SWING * t;
-
-    rig.leftArmPivot.rotation.x = Math.sin(walkPhase + Math.PI) * ARM_SWING * t;
-    rig.rightArmPivot.rotation.x = Math.sin(walkPhase) * ARM_SWING * t;
-
-    rig.head.position.y = rig.headBaseY + Math.abs(Math.sin(walkPhase)) * HEAD_BOB * t;
-
-    rig.root.position.y = Math.abs(Math.sin(walkPhase)) * BODY_BOB * t;
-}
-
-// ─── WebGPU / WebGL engine creation ───
-
-async function createEngine(canvas: HTMLCanvasElement): Promise<{ engine: Engine | WebGPUEngine; isWebGPU: boolean }> {
-    try {
-        const webGPUSupported = await WebGPUEngine.IsSupportedAsync;
-        if (webGPUSupported) {
-            const engine = new WebGPUEngine(canvas, {
-                stencil: true,
-                antialias: true,
-            });
-            await engine.initAsync();
-            return { engine, isWebGPU: true };
-        }
-    } catch {
-        // WebGPU init failed, fall back to WebGL
-    }
-    const engine = new Engine(canvas, true, {
-        preserveDrawingBuffer: true,
-        stencil: true,
-    });
-    return { engine, isWebGPU: false };
 }
 
 // ─── Main component ───
@@ -97,30 +55,24 @@ interface OpenWorldSceneProps {
 
 export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
-    const engineRef = useRef<Engine | WebGPUEngine | null>(null);
+    const engineRef = useRef<Engine | null>(null);
     const coordRef = useRef<HTMLSpanElement>(null);
     const viewModeRef = useRef<HTMLSpanElement>(null);
-    const engineBadgeRef = useRef<HTMLSpanElement>(null);
+    const rendererRef = useRef<HTMLSpanElement>(null);
     const [showDetail, setShowDetail] = useState(false);
     const [detailAddress, setDetailAddress] = useState("");
 
     const setup = useCallback(
-        async (canvas: HTMLCanvasElement) => {
-            const { engine, isWebGPU } = await createEngine(canvas);
+        (canvas: HTMLCanvasElement) => {
+            const engine = new Engine(canvas, true, {
+                preserveDrawingBuffer: true,
+                stencil: true,
+            });
             engineRef.current = engine;
-
-            // Show engine type in HUD
-            if (engineBadgeRef.current) {
-                engineBadgeRef.current.textContent = isWebGPU ? "WebGPU" : "WebGL";
-            }
 
             const scene = new Scene(engine);
             scene.clearColor = new Color4(0.53, 0.81, 0.98, 1);
-
-            // ── Atmospheric fog ──
-            scene.fogMode = Scene.FOGMODE_EXP2;
-            scene.fogColor = new Color3(0.53, 0.81, 0.98);
-            scene.fogDensity = 0.008;
+            scene.environmentIntensity = 0.6;
 
             // ── Camera ──
             const camera = new ArcRotateCamera(
@@ -131,59 +83,61 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 new Vector3(0, 1.5, 0),
                 scene,
             );
-            camera.attachControl(canvas, true);
-            camera.lowerRadiusLimit = 3;
-            camera.upperRadiusLimit = 25;
-            camera.upperBetaLimit = Math.PI / 2.05;
-            camera.wheelPrecision = 30;
-            camera.panningSensibility = 0;
+            // No mouse control — camera is locked behind the character
+            camera.inputs.clear();
+            camera.lowerRadiusLimit = 0.1;
+            camera.upperRadiusLimit = 0.1;
+            camera.radius = 0.1;
+            camera.beta = Math.PI / 2; // eye level — looking straight ahead
 
             // ── Lights ──
             const hemi = new HemisphericLight("hemi", new Vector3(0, 1, 0), scene);
-            hemi.intensity = 0.6;
+            hemi.intensity = 0.7;
 
             const sun = new DirectionalLight("sun", new Vector3(-1, -2, 1), scene);
-            sun.intensity = 0.8;
+            sun.intensity = 1.0;
             sun.position = new Vector3(20, 40, -20);
 
-            // ── Cascaded Shadow Maps ──
-            const shadowGen = new CascadedShadowGenerator(2048, sun);
+            const shadowGen = new ShadowGenerator(2048, sun);
             shadowGen.useBlurExponentialShadowMap = true;
-            shadowGen.numCascades = 4;
-            shadowGen.cascadeBlendPercentage = 0.1;
-            shadowGen.autoCalcDepthBounds = true;
-
-            // ── Post-processing pipeline ──
-            const pipeline = new DefaultRenderingPipeline("default", true, scene, [camera]);
-            pipeline.bloomEnabled = true;
-            pipeline.bloomThreshold = 0.8;
-            pipeline.bloomWeight = 0.3;
-            pipeline.bloomScale = 0.5;
-            pipeline.fxaaEnabled = true;
-            pipeline.imageProcessingEnabled = true;
-            pipeline.imageProcessing.toneMappingEnabled = true;
-            pipeline.imageProcessing.contrast = 1.1;
-            pipeline.imageProcessing.exposure = 1.0;
-
-            // ── SSAO (ambient occlusion) ──
-            const ssao = new SSAO2RenderingPipeline("ssao", scene, { ssaoRatio: 0.5, blurRatio: 0.5 }, [camera], true);
-            ssao.radius = 8;
-            ssao.totalStrength = 0.8;
-            ssao.expensiveBlur = true;
+            shadowGen.blurKernel = 32;
 
             // ── World ──
             const { colliders, insects } = buildWorld(scene, shadowGen);
 
-            // ── Player ──
-            const rig = buildAvatar(scene, walletAddress, shadowGen);
+            // ── Movement state ──
+            const keys: Record<string, boolean> = {};
+            const SPEED = 0.08;
+            const BROADCAST_INTERVAL = 0.1;
+            let positionBroadcastTimer = 0;
+            let isFirstPerson = true;
+            const THIRD_PERSON_RADIUS = 8;
+            const FIRST_PERSON_RADIUS = 0.1;
 
-            // Restore last position from localStorage
+            // ── Remote avatar tracking ──
+            const remoteAvatars = new Map<string, {
+                rig: AvatarRig;
+                prevX: number;
+                prevZ: number;
+            }>();
+
+            // ── Rig placeholder (filled when GLB loads) ──
+            let rig: AvatarRig | null = null;
+            let labelMesh: Mesh | null = null;
+
+            // Show renderer type
+            if (rendererRef.current) {
+                const isWebGPU = !!(engine as unknown as Record<string, unknown>)._adapter;
+                rendererRef.current.textContent = isWebGPU ? "WebGPU" : "WebGL";
+            }
+
+            // ── Load player avatar (async) ──
             const POSITION_STORAGE_KEY = `livv:lastPosition:${walletAddress.toLowerCase()}`;
             let savedPos = { x: 0, z: 0, rotY: 0 };
             try {
                 const stored = localStorage.getItem(POSITION_STORAGE_KEY);
                 if (stored) savedPos = JSON.parse(stored);
-            } catch { /* ignore corrupt data */ }
+            } catch { /* ignore */ }
 
             // Avoid spawning on top of existing players
             const existingPlayers = useGamePresenceStore.getState().remotePlayers;
@@ -204,20 +158,30 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 spawnX += Math.cos(angle) * 2;
                 spawnZ += Math.sin(angle) * 2;
             }
-            rig.root.position.x = spawnX;
-            rig.root.position.z = spawnZ;
-            rig.root.rotation.y = savedPos.rotY;
 
-            useGamePresenceStore.getState().setLocalPosition(spawnX, spawnZ, savedPos.rotY);
+            buildAvatar(scene, walletAddress, shadowGen).then((loadedRig) => {
+                rig = loadedRig;
+                rig.root.position.x = spawnX;
+                rig.root.position.z = spawnZ;
+                rig.root.rotation.y = savedPos.rotY;
 
-            const labelMesh = buildAddressLabel(scene, rig.root, walletAddress, true);
+                useGamePresenceStore.getState().setLocalPosition(spawnX, spawnZ, savedPos.rotY);
 
-            // ── Make label clickable ──
-            labelMesh.isPickable = true;
+                labelMesh = buildAddressLabel(scene, rig.root, walletAddress, true);
+                labelMesh.isPickable = true;
+
+                // Hide in first-person mode
+                if (isFirstPerson) {
+                    rig.root.getChildMeshes().forEach((m) => { m.isVisible = false; });
+                    labelMesh.isVisible = false;
+                }
+            });
+
+            // ── Label click handler ──
             scene.onPointerDown = (_evt, pickResult) => {
                 if (pickResult?.hit && pickResult.pickedMesh?.name === "label") {
                     const clickedRoot = pickResult.pickedMesh.parent;
-                    if (clickedRoot === rig.root) {
+                    if (rig && clickedRoot === rig.root) {
                         setDetailAddress(walletAddress);
                     } else {
                         for (const [addr, remote] of remoteAvatars) {
@@ -231,38 +195,12 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 }
             };
 
-            // ── Movement (WASD / arrows) + walk animation ──
-            const keys: Record<string, boolean> = {};
-            const SPEED = 0.08;
-            const WALK_CYCLE_SPEED = 8;
-            let walkPhase = 0;
-            let walkIntensity = 0;
-
-            // ── Remote avatar tracking ──
-            const remoteAvatars = new Map<string, {
-                rig: AvatarRig;
-                walkPhase: number;
-                walkIntensity: number;
-                prevX: number;
-                prevZ: number;
-            }>();
-            const BROADCAST_INTERVAL = 0.05; // seconds (~20Hz)
-            let positionBroadcastTimer = 0;
-            let lastBroadcastX = 0;
-            let lastBroadcastZ = 0;
-            let lastBroadcastTime = 0;
-            let wasBroadcasting = false;
-
-            // ── First-person / Third-person toggle ──
-            let isFirstPerson = false;
-            const THIRD_PERSON_RADIUS = 8;
-            const FIRST_PERSON_RADIUS = 0.1;
-
             function setAvatarVisibility(visible: boolean) {
+                if (!rig) return;
                 rig.root.getChildMeshes().forEach((m) => {
                     m.isVisible = visible;
                 });
-                labelMesh.isVisible = visible;
+                if (labelMesh) labelMesh.isVisible = visible;
             }
 
             function toggleViewMode() {
@@ -271,11 +209,13 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     camera.radius = FIRST_PERSON_RADIUS;
                     camera.lowerRadiusLimit = FIRST_PERSON_RADIUS;
                     camera.upperRadiusLimit = FIRST_PERSON_RADIUS;
+                    camera.beta = Math.PI / 2;
                     setAvatarVisibility(false);
                 } else {
                     camera.radius = THIRD_PERSON_RADIUS;
-                    camera.lowerRadiusLimit = 3;
-                    camera.upperRadiusLimit = 25;
+                    camera.lowerRadiusLimit = THIRD_PERSON_RADIUS;
+                    camera.upperRadiusLimit = THIRD_PERSON_RADIUS;
+                    camera.beta = Math.PI / 2.5;
                     setAvatarVisibility(true);
                 }
                 if (viewModeRef.current) {
@@ -299,22 +239,31 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             scene.onBeforeRenderObservable.add(() => {
                 const dt = engine.getDeltaTime() / 1000;
 
-                const forward = camera.getForwardRay().direction;
-                forward.y = 0;
-                forward.normalize();
-                const right = Vector3.Cross(forward, Vector3.Up()).normalize();
+                // Wait for avatar to load
+                if (!rig) {
+                    animateInsects(insects);
+                    return;
+                }
+
+                // ── A/D and Arrow Left/Right turn the character ──
+                const TURN_SPEED = 2.5; // radians per second
+                if (keys["a"] || keys["arrowleft"]) rig.root.rotation.y -= TURN_SPEED * dt;
+                if (keys["d"] || keys["arrowright"]) rig.root.rotation.y += TURN_SPEED * dt;
+
+                // ── W/S move forward/backward in character's facing direction ──
+                const facingAngle = rig.root.rotation.y;
+                const charForward = new Vector3(Math.sin(facingAngle), 0, Math.cos(facingAngle));
 
                 const move = Vector3.Zero();
-                if (keys["w"] || keys["arrowup"]) move.addInPlace(forward);
-                if (keys["s"] || keys["arrowdown"]) move.subtractInPlace(forward);
-                if (keys["a"] || keys["arrowleft"]) move.addInPlace(right);
-                if (keys["d"] || keys["arrowright"]) move.subtractInPlace(right);
+                if (keys["w"] || keys["arrowup"]) move.addInPlace(charForward);
+                if (keys["s"] || keys["arrowdown"]) move.subtractInPlace(charForward);
 
                 const isMoving = move.length() > 0.001;
 
                 if (isMoving) {
                     move.normalize().scaleInPlace(SPEED);
 
+                    // Build dynamic collider list
                     const allColliders = [...colliders];
                     const curX = rig.root.position.x;
                     const curZ = rig.root.position.z;
@@ -341,22 +290,21 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                         rig.root.position.z = newZ;
                     }
 
-                    const angle = Math.atan2(move.x, move.z);
-                    rig.root.rotation.y = angle;
-
-                    camera.target.x = rig.root.position.x;
-                    camera.target.y = isFirstPerson ? rig.headBaseY * 0.95 : 1.5;
-                    camera.target.z = rig.root.position.z;
-
-                    walkPhase += WALK_CYCLE_SPEED * dt;
-                    walkIntensity = Math.min(1, walkIntensity + dt * 6);
-                } else {
-                    walkIntensity = Math.max(0, walkIntensity - dt * 6);
                 }
 
-                animateWalkCycle(rig, walkPhase, walkIntensity);
+                // Camera locked behind character — aligned with facing direction
+                camera.target.x = rig.root.position.x;
+                camera.target.y = isFirstPerson ? rig.headBaseY * 0.95 : 1.5;
+                camera.target.z = rig.root.position.z;
+                camera.alpha = -rig.root.rotation.y - Math.PI / 2;
+
+                // Blend walk/idle animations
+                blendWalkAnimation(rig, isMoving, dt);
+
+                // Animate insects
                 animateInsects(insects);
 
+                // Update coordinate display
                 if (coordRef.current) {
                     const px = rig.root.position.x.toFixed(1);
                     const py = rig.root.position.y.toFixed(1);
@@ -364,27 +312,14 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     coordRef.current.textContent = `X: ${px}  Y: ${py}  Z: ${pz}`;
                 }
 
-                // ── Broadcast local position (throttled ~20Hz) ──
+                // ── Broadcast local position (throttled ~10Hz) ──
                 positionBroadcastTimer += dt;
-                const shouldBroadcast = isMoving && positionBroadcastTimer >= BROADCAST_INTERVAL;
-                const shouldSendStop = !isMoving && wasBroadcasting;
-
-                if (shouldBroadcast || shouldSendStop) {
+                if (isMoving && positionBroadcastTimer >= BROADCAST_INTERVAL) {
                     positionBroadcastTimer = 0;
                     const px = rig.root.position.x;
                     const pz = rig.root.position.z;
                     const pRotY = rig.root.rotation.y;
 
-                    // Compute velocity (units/sec)
-                    const now = performance.now() / 1000;
-                    const elapsed = lastBroadcastTime > 0 ? now - lastBroadcastTime : BROADCAST_INTERVAL;
-                    const vx = elapsed > 0 ? (px - lastBroadcastX) / elapsed : 0;
-                    const vz = elapsed > 0 ? (pz - lastBroadcastZ) / elapsed : 0;
-                    lastBroadcastX = px;
-                    lastBroadcastZ = pz;
-                    lastBroadcastTime = now;
-
-                    // Save locally so i_am_here replies include our position
                     useGamePresenceStore.getState().setLocalPosition(px, pz, pRotY);
 
                     try {
@@ -392,7 +327,7 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                             `livv:lastPosition:${walletAddress.toLowerCase()}`,
                             JSON.stringify({ x: px, z: pz, rotY: pRotY }),
                         );
-                    } catch { /* quota exceeded — ignore */ }
+                    } catch { /* quota exceeded */ }
 
                     const wsStore = useWebSocketStore.getState();
                     wsStore.sendMessage("broadcastToChannel", {
@@ -400,79 +335,62 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                         x: px,
                         z: pz,
                         rotY: pRotY,
-                        vx: shouldSendStop ? 0 : vx,
-                        vz: shouldSendStop ? 0 : vz,
                     });
                 }
-                wasBroadcasting = isMoving;
 
                 // ── Remote avatars: spawn / despawn / lerp ──
                 const presenceStore = useGamePresenceStore.getState();
                 const remotePlayers = presenceStore.remotePlayers;
 
+                // Spawn new remote avatars (async)
                 for (const [addr, player] of remotePlayers) {
                     if (remoteAvatars.has(addr)) continue;
+                    // Mark as pending to avoid duplicate spawns
+                    remoteAvatars.set(addr, { rig: null as unknown as AvatarRig, prevX: player.x, prevZ: player.z });
 
-                    const remoteRig = buildAvatar(scene, player.address, shadowGen);
-                    const remoteLabelMesh = buildAddressLabel(scene, remoteRig.root, player.address);
-                    remoteLabelMesh.isPickable = true;
-                    remoteRig.root.position.x = player.x;
-                    remoteRig.root.position.z = player.z;
-                    remoteRig.root.rotation.y = player.rotY;
-                    remoteAvatars.set(addr, {
-                        rig: remoteRig,
-                        walkPhase: 0,
-                        walkIntensity: 0,
-                        prevX: player.x,
-                        prevZ: player.z,
+                    buildAvatar(scene, player.address, shadowGen).then((remoteRig) => {
+                        const remoteLabelMesh = buildAddressLabel(scene, remoteRig.root, player.address);
+                        remoteLabelMesh.isPickable = true;
+                        remoteRig.root.position.x = player.x;
+                        remoteRig.root.position.z = player.z;
+                        remoteRig.root.rotation.y = player.rotY;
+                        remoteAvatars.set(addr, {
+                            rig: remoteRig,
+                            prevX: player.x,
+                            prevZ: player.z,
+                        });
                     });
                 }
 
+                // Despawn removed remote avatars
                 for (const [addr, remote] of remoteAvatars) {
                     if (!remotePlayers.has(addr)) {
-                        remote.rig.root.dispose();
+                        if (remote.rig) remote.rig.root.dispose();
                         remoteAvatars.delete(addr);
                     }
                 }
 
-                // Lerp existing remote avatars toward extrapolated targets (dead reckoning)
-                const LERP_SPEED = 10;
-                const MAX_EXTRAP_TIME = 0.2; // cap extrapolation at 200ms
+                // Lerp existing remote avatars
+                const LERP_SPEED = 8;
                 for (const [addr, remote] of remoteAvatars) {
+                    if (!remote.rig) continue; // still loading
                     const playerData = remotePlayers.get(addr);
                     if (!playerData) continue;
-
-                    // Extrapolate target using velocity
-                    let goalX = playerData.targetX;
-                    let goalZ = playerData.targetZ;
-                    if (playerData.vx !== 0 || playerData.vz !== 0) {
-                        const elapsed = Math.min(
-                            (Date.now() - playerData.lastUpdateTime) / 1000,
-                            MAX_EXTRAP_TIME,
-                        );
-                        goalX += playerData.vx * elapsed;
-                        goalZ += playerData.vz * elapsed;
-                    }
 
                     const lerpFactor = Math.min(1, dt * LERP_SPEED);
                     const oldX = remote.rig.root.position.x;
                     const oldZ = remote.rig.root.position.z;
 
-                    remote.rig.root.position.x += (goalX - oldX) * lerpFactor;
-                    remote.rig.root.position.z += (goalZ - oldZ) * lerpFactor;
+                    remote.rig.root.position.x += (playerData.targetX - oldX) * lerpFactor;
+                    remote.rig.root.position.z += (playerData.targetZ - oldZ) * lerpFactor;
                     remote.rig.root.rotation.y += (playerData.targetRotY - remote.rig.root.rotation.y) * lerpFactor;
 
+                    // Detect movement for walk animation
                     const dx = remote.rig.root.position.x - remote.prevX;
                     const dz = remote.rig.root.position.z - remote.prevZ;
                     const remoteIsMoving = (dx * dx + dz * dz) > 0.00001;
 
-                    if (remoteIsMoving) {
-                        remote.walkPhase += WALK_CYCLE_SPEED * dt;
-                        remote.walkIntensity = Math.min(1, remote.walkIntensity + dt * 6);
-                    } else {
-                        remote.walkIntensity = Math.max(0, remote.walkIntensity - dt * 6);
-                    }
-                    animateWalkCycle(remote.rig, remote.walkPhase, remote.walkIntensity);
+                    blendWalkAnimation(remote.rig, remoteIsMoving, dt);
 
                     remote.prevX = remote.rig.root.position.x;
                     remote.prevZ = remote.rig.root.position.z;
@@ -490,12 +408,9 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 window.removeEventListener("keyup", onKeyUp);
                 window.removeEventListener("resize", onResize);
                 for (const [, remote] of remoteAvatars) {
-                    remote.rig.root.dispose();
+                    if (remote.rig) remote.rig.root.dispose();
                 }
                 remoteAvatars.clear();
-                pipeline.dispose();
-                ssao.dispose();
-                clearMaterialCache();
                 scene.dispose();
                 engine.dispose();
                 engineRef.current = null;
@@ -506,16 +421,8 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
 
     useEffect(() => {
         if (!canvasRef.current) return;
-        let cancelled = false;
-        let cleanup: (() => void) | undefined;
-        setup(canvasRef.current).then((fn) => {
-            if (cancelled) { fn(); return; }
-            cleanup = fn;
-        });
-        return () => {
-            cancelled = true;
-            cleanup?.();
-        };
+        const cleanup = setup(canvasRef.current);
+        return cleanup;
     }, [setup]);
 
     return (
@@ -528,9 +435,13 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             <div className="absolute bottom-4 left-4 rounded bg-black/60 px-3 py-1.5 font-mono text-xs text-white/80 backdrop-blur-sm">
                 <span ref={coordRef}>X: 0.0  Y: 0.0  Z: 0.0</span>
             </div>
-            <div className="absolute bottom-4 right-4 flex items-center gap-2 rounded bg-black/60 px-3 py-1.5 text-xs text-white/80 backdrop-blur-sm">
-                <span ref={engineBadgeRef} className="rounded bg-emerald-600/80 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white" />
-                <span ref={viewModeRef}>3rd Person (V)</span>
+            <div className="absolute bottom-4 right-4 flex flex-col items-end gap-1">
+                <div className="rounded bg-black/60 px-3 py-1.5 text-xs text-white/80 backdrop-blur-sm">
+                    <span ref={viewModeRef}>1st Person (V)</span>
+                </div>
+                <div className="rounded bg-black/60 px-3 py-1.5 font-mono text-xs text-white/80 backdrop-blur-sm">
+                    <span ref={rendererRef}>WebGL</span>
+                </div>
             </div>
             {showDetail && detailAddress && (
                 <AvatarDetailPanel
