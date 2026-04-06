@@ -16,7 +16,7 @@ import {
     ShadowGenerator,
     Mesh,
 } from "@babylonjs/core";
-import { buildAvatar, buildAddressLabel } from "@/game/avatarBuilder";
+import { buildAvatar, buildAddressLabel, blendWalkAnimation } from "@/game/avatarBuilder";
 import type { AvatarRig } from "@/game/avatarBuilder";
 import { useGamePresenceStore } from "@/stores/useGamePresenceStore";
 import { useWebSocketStore } from "@/stores/useWebSocketStore";
@@ -45,31 +45,6 @@ function isPositionBlocked(x: number, z: number, colliders: Collider[]): boolean
         if (dx * dx + dz * dz < minDist * minDist) return true;
     }
     return false;
-}
-
-// ─── Walk animation helper ───
-
-function animateWalkCycle(rig: AvatarRig, walkPhase: number, intensity: number) {
-    const LEG_SWING = 0.45;   // max leg rotation (radians)
-    const ARM_SWING = 0.35;   // max arm rotation (radians)
-    const HEAD_BOB = 0.015;   // vertical head bobbing amount
-    const BODY_BOB = 0.02;    // vertical body bounce amount
-
-    const t = intensity; // 0 = standing, 1 = full walk
-
-    // Legs swing in opposition: left forward = right backward
-    rig.leftLegPivot.rotation.x = Math.sin(walkPhase) * LEG_SWING * t;
-    rig.rightLegPivot.rotation.x = Math.sin(walkPhase + Math.PI) * LEG_SWING * t;
-
-    // Arms swing opposite to same-side leg (natural gait)
-    rig.leftArmPivot.rotation.x = Math.sin(walkPhase + Math.PI) * ARM_SWING * t;
-    rig.rightArmPivot.rotation.x = Math.sin(walkPhase) * ARM_SWING * t;
-
-    // Head bobs at double frequency (two steps per cycle)
-    rig.head.position.y = rig.headBaseY + Math.abs(Math.sin(walkPhase)) * HEAD_BOB * t;
-
-    // Body bounces up slightly at mid-stride
-    rig.root.position.y = Math.abs(Math.sin(walkPhase)) * BODY_BOB * t;
 }
 
 // ─── Main component ───
@@ -112,9 +87,9 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             camera.lowerRadiusLimit = 0.1;
             camera.upperRadiusLimit = 0.1;
             camera.radius = 0.1;
-            camera.upperBetaLimit = Math.PI / 2.05; // prevent camera from going below ground
+            camera.upperBetaLimit = Math.PI / 2.05;
             camera.wheelPrecision = 30;
-            camera.panningSensibility = 0; // disable panning
+            camera.panningSensibility = 0;
 
             // ── Lights ──
             const hemi = new HemisphericLight("hemi", new Vector3(0, 1, 0), scene);
@@ -131,16 +106,39 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             // ── World ──
             const { colliders, insects } = buildWorld(scene, shadowGen);
 
-            // ── Player ──
-            const rig = buildAvatar(scene, walletAddress, shadowGen);
+            // ── Movement state ──
+            const keys: Record<string, boolean> = {};
+            const SPEED = 0.08;
+            const BROADCAST_INTERVAL = 0.1;
+            let positionBroadcastTimer = 0;
+            let isFirstPerson = true;
+            const THIRD_PERSON_RADIUS = 8;
+            const FIRST_PERSON_RADIUS = 0.1;
 
-            // Restore last position from localStorage (default 0,0,0)
+            // ── Remote avatar tracking ──
+            const remoteAvatars = new Map<string, {
+                rig: AvatarRig;
+                prevX: number;
+                prevZ: number;
+            }>();
+
+            // ── Rig placeholder (filled when GLB loads) ──
+            let rig: AvatarRig | null = null;
+            let labelMesh: Mesh | null = null;
+
+            // Show renderer type
+            if (rendererRef.current) {
+                const isWebGPU = !!(engine as unknown as Record<string, unknown>)._adapter;
+                rendererRef.current.textContent = isWebGPU ? "WebGPU" : "WebGL";
+            }
+
+            // ── Load player avatar (async) ──
             const POSITION_STORAGE_KEY = `livv:lastPosition:${walletAddress.toLowerCase()}`;
             let savedPos = { x: 0, z: 0, rotY: 0 };
             try {
                 const stored = localStorage.getItem(POSITION_STORAGE_KEY);
                 if (stored) savedPos = JSON.parse(stored);
-            } catch { /* ignore corrupt data */ }
+            } catch { /* ignore */ }
 
             // Avoid spawning on top of existing players
             const existingPlayers = useGamePresenceStore.getState().remotePlayers;
@@ -161,35 +159,32 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 spawnX += Math.cos(angle) * 2;
                 spawnZ += Math.sin(angle) * 2;
             }
-            rig.root.position.x = spawnX;
-            rig.root.position.z = spawnZ;
-            rig.root.rotation.y = savedPos.rotY;
 
-            // Set initial local position in store
-            useGamePresenceStore.getState().setLocalPosition(spawnX, spawnZ, savedPos.rotY);
+            buildAvatar(scene, walletAddress, shadowGen).then((loadedRig) => {
+                rig = loadedRig;
+                rig.root.position.x = spawnX;
+                rig.root.position.z = spawnZ;
+                rig.root.rotation.y = savedPos.rotY;
 
-            const labelMesh = buildAddressLabel(scene, rig.root, walletAddress, true);
+                useGamePresenceStore.getState().setLocalPosition(spawnX, spawnZ, savedPos.rotY);
 
-            // Hide avatar in default first-person mode
-            rig.root.getChildMeshes().forEach((m) => { m.isVisible = false; });
-            labelMesh.isVisible = false;
+                labelMesh = buildAddressLabel(scene, rig.root, walletAddress, true);
+                labelMesh.isPickable = true;
 
-            // Show renderer type (WebGPU vs WebGL)
-            if (rendererRef.current) {
-                const isWebGPU = !!(engine as unknown as Record<string, unknown>)._adapter;
-                rendererRef.current.textContent = isWebGPU ? "WebGPU" : "WebGL";
-            }
+                // Hide in first-person mode
+                if (isFirstPerson) {
+                    rig.root.getChildMeshes().forEach((m) => { m.isVisible = false; });
+                    labelMesh.isVisible = false;
+                }
+            });
 
-            // ── Make label clickable ──
-            labelMesh.isPickable = true;
+            // ── Label click handler ──
             scene.onPointerDown = (_evt, pickResult) => {
                 if (pickResult?.hit && pickResult.pickedMesh?.name === "label") {
-                    // Determine whose label was clicked
                     const clickedRoot = pickResult.pickedMesh.parent;
-                    if (clickedRoot === rig.root) {
+                    if (rig && clickedRoot === rig.root) {
                         setDetailAddress(walletAddress);
                     } else {
-                        // Find remote player by root reference
                         for (const [addr, remote] of remoteAvatars) {
                             if (remote.rig.root === clickedRoot) {
                                 setDetailAddress(addr);
@@ -201,34 +196,12 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 }
             };
 
-            // ── Movement (WASD / arrows) + walk animation ──
-            const keys: Record<string, boolean> = {};
-            const SPEED = 0.08;
-            const WALK_CYCLE_SPEED = 8; // how fast the walk cycle plays
-            let walkPhase = 0;
-            let walkIntensity = 0; // lerps 0→1 when moving, 1→0 when stopping
-
-            // ── Remote avatar tracking ──
-            const remoteAvatars = new Map<string, {
-                rig: AvatarRig;
-                walkPhase: number;
-                walkIntensity: number;
-                prevX: number;
-                prevZ: number;
-            }>();
-            const BROADCAST_INTERVAL = 0.1; // seconds (~10Hz)
-            let positionBroadcastTimer = 0;
-
-            // ── First-person / Third-person toggle ──
-            let isFirstPerson = true;
-            const THIRD_PERSON_RADIUS = 8;
-            const FIRST_PERSON_RADIUS = 0.1;
-
             function setAvatarVisibility(visible: boolean) {
+                if (!rig) return;
                 rig.root.getChildMeshes().forEach((m) => {
                     m.isVisible = visible;
                 });
-                labelMesh.isVisible = visible;
+                if (labelMesh) labelMesh.isVisible = visible;
             }
 
             function toggleViewMode() {
@@ -244,7 +217,6 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     camera.upperRadiusLimit = 25;
                     setAvatarVisibility(true);
                 }
-                // Update HUD
                 if (viewModeRef.current) {
                     viewModeRef.current.textContent = isFirstPerson ? "1st Person (V)" : "3rd Person (V)";
                 }
@@ -264,7 +236,13 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             window.addEventListener("keyup", onKeyUp);
 
             scene.onBeforeRenderObservable.add(() => {
-                const dt = engine.getDeltaTime() / 1000; // seconds
+                const dt = engine.getDeltaTime() / 1000;
+
+                // Wait for avatar to load
+                if (!rig) {
+                    animateInsects(insects);
+                    return;
+                }
 
                 // Derive forward/right from camera orientation (projected onto XZ)
                 const forward = camera.getForwardRay().direction;
@@ -283,8 +261,7 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 if (isMoving) {
                     move.normalize().scaleInPlace(SPEED);
 
-                    // Build dynamic collider list (static world + remote avatars)
-                    // Skip avatars we're already overlapping with (so we can move OUT)
+                    // Build dynamic collider list
                     const allColliders = [...colliders];
                     const curX = rig.root.position.x;
                     const curZ = rig.root.position.z;
@@ -294,7 +271,6 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                         const dx = curX - rx;
                         const dz = curZ - rz;
                         const minDist = PLAYER_RADIUS * 2;
-                        // Only add as collider if we're NOT currently inside them
                         if (dx * dx + dz * dz >= minDist * minDist) {
                             allColliders.push({ x: rx, z: rz, radius: PLAYER_RADIUS });
                         }
@@ -303,7 +279,6 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     const newX = curX + move.x;
                     const newZ = curZ + move.z;
 
-                    // Try full move first; if blocked, try axis-separated (wall sliding)
                     if (!isPositionBlocked(newX, newZ, allColliders)) {
                         rig.root.position.x = newX;
                         rig.root.position.z = newZ;
@@ -312,7 +287,6 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     } else if (!isPositionBlocked(curX, newZ, allColliders)) {
                         rig.root.position.z = newZ;
                     }
-                    // else: fully blocked, don't move
 
                     // Rotate avatar to face movement direction
                     const angle = Math.atan2(move.x, move.z);
@@ -322,24 +296,15 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     camera.target.x = rig.root.position.x;
                     camera.target.y = isFirstPerson ? rig.headBaseY * 0.95 : 1.5;
                     camera.target.z = rig.root.position.z;
-
-                    // Advance walk phase
-                    walkPhase += WALK_CYCLE_SPEED * dt;
-
-                    // Smoothly ramp up walk intensity
-                    walkIntensity = Math.min(1, walkIntensity + dt * 6);
-                } else {
-                    // Smoothly ramp down walk intensity
-                    walkIntensity = Math.max(0, walkIntensity - dt * 6);
                 }
 
-                // Animate limbs (lerps back to standing when stopped)
-                animateWalkCycle(rig, walkPhase, walkIntensity);
+                // Blend walk/idle animations
+                blendWalkAnimation(rig, isMoving, dt);
 
-                // Animate insects (NPC — synced via Date.now)
+                // Animate insects
                 animateInsects(insects);
 
-                // Update coordinate display (direct DOM for perf)
+                // Update coordinate display
                 if (coordRef.current) {
                     const px = rig.root.position.x.toFixed(1);
                     const py = rig.root.position.y.toFixed(1);
@@ -355,16 +320,14 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     const pz = rig.root.position.z;
                     const pRotY = rig.root.rotation.y;
 
-                    // Save locally so i_am_here replies include our position
                     useGamePresenceStore.getState().setLocalPosition(px, pz, pRotY);
 
-                    // Persist to localStorage for next session
                     try {
                         localStorage.setItem(
                             `livv:lastPosition:${walletAddress.toLowerCase()}`,
                             JSON.stringify({ x: px, z: pz, rotY: pRotY }),
                         );
-                    } catch { /* quota exceeded — ignore */ }
+                    } catch { /* quota exceeded */ }
 
                     const wsStore = useWebSocketStore.getState();
                     wsStore.sendMessage("broadcastToChannel", {
@@ -379,36 +342,38 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 const presenceStore = useGamePresenceStore.getState();
                 const remotePlayers = presenceStore.remotePlayers;
 
-                // Spawn new remote avatars
+                // Spawn new remote avatars (async)
                 for (const [addr, player] of remotePlayers) {
                     if (remoteAvatars.has(addr)) continue;
+                    // Mark as pending to avoid duplicate spawns
+                    remoteAvatars.set(addr, { rig: null as unknown as AvatarRig, prevX: player.x, prevZ: player.z });
 
-                    const remoteRig = buildAvatar(scene, player.address, shadowGen);
-                    const remoteLabelMesh = buildAddressLabel(scene, remoteRig.root, player.address);
-                    remoteLabelMesh.isPickable = true;
-                    remoteRig.root.position.x = player.x;
-                    remoteRig.root.position.z = player.z;
-                    remoteRig.root.rotation.y = player.rotY;
-                    remoteAvatars.set(addr, {
-                        rig: remoteRig,
-                        walkPhase: 0,
-                        walkIntensity: 0,
-                        prevX: player.x,
-                        prevZ: player.z,
+                    buildAvatar(scene, player.address, shadowGen).then((remoteRig) => {
+                        const remoteLabelMesh = buildAddressLabel(scene, remoteRig.root, player.address);
+                        remoteLabelMesh.isPickable = true;
+                        remoteRig.root.position.x = player.x;
+                        remoteRig.root.position.z = player.z;
+                        remoteRig.root.rotation.y = player.rotY;
+                        remoteAvatars.set(addr, {
+                            rig: remoteRig,
+                            prevX: player.x,
+                            prevZ: player.z,
+                        });
                     });
                 }
 
                 // Despawn removed remote avatars
                 for (const [addr, remote] of remoteAvatars) {
                     if (!remotePlayers.has(addr)) {
-                        remote.rig.root.dispose();
+                        if (remote.rig) remote.rig.root.dispose();
                         remoteAvatars.delete(addr);
                     }
                 }
 
-                // Lerp existing remote avatars toward their targets
-                const LERP_SPEED = 8; // units / second interpolation factor
+                // Lerp existing remote avatars
+                const LERP_SPEED = 8;
                 for (const [addr, remote] of remoteAvatars) {
+                    if (!remote.rig) continue; // still loading
                     const playerData = remotePlayers.get(addr);
                     if (!playerData) continue;
 
@@ -425,13 +390,7 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     const dz = remote.rig.root.position.z - remote.prevZ;
                     const remoteIsMoving = (dx * dx + dz * dz) > 0.00001;
 
-                    if (remoteIsMoving) {
-                        remote.walkPhase += WALK_CYCLE_SPEED * dt;
-                        remote.walkIntensity = Math.min(1, remote.walkIntensity + dt * 6);
-                    } else {
-                        remote.walkIntensity = Math.max(0, remote.walkIntensity - dt * 6);
-                    }
-                    animateWalkCycle(remote.rig, remote.walkPhase, remote.walkIntensity);
+                    blendWalkAnimation(remote.rig, remoteIsMoving, dt);
 
                     remote.prevX = remote.rig.root.position.x;
                     remote.prevZ = remote.rig.root.position.z;
@@ -448,9 +407,8 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 window.removeEventListener("keydown", onKeyDown);
                 window.removeEventListener("keyup", onKeyUp);
                 window.removeEventListener("resize", onResize);
-                // Clean up remote avatars
                 for (const [, remote] of remoteAvatars) {
-                    remote.rig.root.dispose();
+                    if (remote.rig) remote.rig.root.dispose();
                 }
                 remoteAvatars.clear();
                 scene.dispose();
