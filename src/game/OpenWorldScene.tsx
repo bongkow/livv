@@ -83,6 +83,7 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
     const engineRef = useRef<Engine | null>(null);
     const coordRef = useRef<HTMLSpanElement>(null);
     const viewModeRef = useRef<HTMLSpanElement>(null);
+    const rendererRef = useRef<HTMLSpanElement>(null);
     const [showDetail, setShowDetail] = useState(false);
     const [detailAddress, setDetailAddress] = useState("");
 
@@ -107,8 +108,9 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 scene,
             );
             camera.attachControl(canvas, true);
-            camera.lowerRadiusLimit = 3;
-            camera.upperRadiusLimit = 25;
+            camera.lowerRadiusLimit = 0.1;
+            camera.upperRadiusLimit = 0.1;
+            camera.radius = 0.1;
             camera.upperBetaLimit = Math.PI / 2.05; // prevent camera from going below ground
             camera.wheelPrecision = 30;
             camera.panningSensibility = 0; // disable panning
@@ -166,6 +168,16 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
 
             const labelMesh = buildAddressLabel(scene, rig.root, walletAddress, true);
 
+            // Hide avatar in default first-person mode
+            rig.root.getChildMeshes().forEach((m) => { m.isVisible = false; });
+            labelMesh.isVisible = false;
+
+            // Show renderer type (WebGPU vs WebGL)
+            if (rendererRef.current) {
+                const isWebGPU = !!(engine as unknown as Record<string, unknown>)._adapter;
+                rendererRef.current.textContent = isWebGPU ? "WebGPU" : "WebGL";
+            }
+
             // ── Make label clickable ──
             labelMesh.isPickable = true;
             scene.onPointerDown = (_evt, pickResult) => {
@@ -206,7 +218,7 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             let positionBroadcastTimer = 0;
 
             // ── First-person / Third-person toggle ──
-            let isFirstPerson = false;
+            let isFirstPerson = true;
             const THIRD_PERSON_RADIUS = 8;
             const FIRST_PERSON_RADIUS = 0.1;
 
@@ -463,8 +475,13 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             <div className="absolute bottom-4 left-4 rounded bg-black/60 px-3 py-1.5 font-mono text-xs text-white/80 backdrop-blur-sm">
                 <span ref={coordRef}>X: 0.0  Y: 0.0  Z: 0.0</span>
             </div>
-            <div className="absolute bottom-4 right-4 rounded bg-black/60 px-3 py-1.5 text-xs text-white/80 backdrop-blur-sm">
-                <span ref={viewModeRef}>3rd Person (V)</span>
+            <div className="absolute bottom-4 right-4 flex flex-col items-end gap-1">
+                <div className="rounded bg-black/60 px-3 py-1.5 text-xs text-white/80 backdrop-blur-sm">
+                    <span ref={viewModeRef}>1st Person (V)</span>
+                </div>
+                <div className="rounded bg-black/60 px-3 py-1.5 font-mono text-xs text-white/80 backdrop-blur-sm">
+                    <span ref={rendererRef}>WebGL</span>
+                </div>
             </div>
             {showDetail && detailAddress && (
                 <AvatarDetailPanel
