@@ -83,15 +83,13 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 new Vector3(0, 1.5, 0),
                 scene,
             );
-            camera.attachControl(canvas, true);
+            // No mouse control — camera is locked behind the character
+            camera.inputs.clear();
             camera.lowerRadiusLimit = 0.1;
             camera.upperRadiusLimit = 0.1;
             camera.radius = 0.1;
             camera.upperBetaLimit = Math.PI / 2.05;
-            camera.wheelPrecision = 30;
-            camera.panningSensibility = 0;
-            // Disable built-in keyboard inputs — we handle WASD/arrows ourselves
-            camera.inputs.removeByType("ArcRotateCameraKeyboardMoveInput");
+            camera.beta = Math.PI / 2.2; // slight downward angle
 
             // ── Lights ──
             const hemi = new HemisphericLight("hemi", new Vector3(0, 1, 0), scene);
@@ -212,11 +210,13 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     camera.radius = FIRST_PERSON_RADIUS;
                     camera.lowerRadiusLimit = FIRST_PERSON_RADIUS;
                     camera.upperRadiusLimit = FIRST_PERSON_RADIUS;
+                    camera.beta = Math.PI / 2.2;
                     setAvatarVisibility(false);
                 } else {
                     camera.radius = THIRD_PERSON_RADIUS;
-                    camera.lowerRadiusLimit = 3;
-                    camera.upperRadiusLimit = 25;
+                    camera.lowerRadiusLimit = THIRD_PERSON_RADIUS;
+                    camera.upperRadiusLimit = THIRD_PERSON_RADIUS;
+                    camera.beta = Math.PI / 3.5;
                     setAvatarVisibility(true);
                 }
                 if (viewModeRef.current) {
@@ -246,26 +246,18 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     return;
                 }
 
-                // ── Arrow keys control camera orbit/tilt ──
-                const CAM_ROTATE_SPEED = 2.0;
-                const CAM_TILT_SPEED = 1.5;
-                if (keys["arrowleft"]) camera.alpha += CAM_ROTATE_SPEED * dt;
-                if (keys["arrowright"]) camera.alpha -= CAM_ROTATE_SPEED * dt;
-                if (keys["arrowup"]) camera.beta = Math.max(0.3, camera.beta - CAM_TILT_SPEED * dt);
-                if (keys["arrowdown"]) camera.beta = Math.min(Math.PI / 2.05, camera.beta + CAM_TILT_SPEED * dt);
-
-                // ── A/D turn the character ──
+                // ── A/D and Arrow Left/Right turn the character ──
                 const TURN_SPEED = 2.5; // radians per second
-                if (keys["a"]) rig.root.rotation.y -= TURN_SPEED * dt;
-                if (keys["d"]) rig.root.rotation.y += TURN_SPEED * dt;
+                if (keys["a"] || keys["arrowleft"]) rig.root.rotation.y -= TURN_SPEED * dt;
+                if (keys["d"] || keys["arrowright"]) rig.root.rotation.y += TURN_SPEED * dt;
 
                 // ── W/S move forward/backward in character's facing direction ──
                 const facingAngle = rig.root.rotation.y;
                 const charForward = new Vector3(Math.sin(facingAngle), 0, Math.cos(facingAngle));
 
                 const move = Vector3.Zero();
-                if (keys["w"]) move.addInPlace(charForward);
-                if (keys["s"]) move.subtractInPlace(charForward);
+                if (keys["w"] || keys["arrowup"]) move.addInPlace(charForward);
+                if (keys["s"] || keys["arrowdown"]) move.subtractInPlace(charForward);
 
                 const isMoving = move.length() > 0.001;
 
@@ -301,10 +293,11 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
 
                 }
 
-                // Camera always follows player (needed for arrow key rotation while standing)
+                // Camera locked behind character — aligned with facing direction
                 camera.target.x = rig.root.position.x;
                 camera.target.y = isFirstPerson ? rig.headBaseY * 0.95 : 1.5;
                 camera.target.z = rig.root.position.z;
+                camera.alpha = -rig.root.rotation.y - Math.PI / 2;
 
                 // Blend walk/idle animations
                 blendWalkAnimation(rig, isMoving, dt);
