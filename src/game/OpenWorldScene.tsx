@@ -16,7 +16,7 @@ import {
     ShadowGenerator,
     Mesh,
 } from "@babylonjs/core";
-import { buildAvatar, buildAddressLabel, blendWalkAnimation } from "@/game/avatarBuilder";
+import { buildAvatar, buildAddressLabel, buildChatBubble, blendWalkAnimation } from "@/game/avatarBuilder";
 import type { AvatarRig } from "@/game/avatarBuilder";
 import { useGamePresenceStore } from "@/stores/useGamePresenceStore";
 import { useWebSocketStore } from "@/stores/useWebSocketStore";
@@ -61,6 +61,10 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
     const rendererRef = useRef<HTMLSpanElement>(null);
     const [showDetail, setShowDetail] = useState(false);
     const [detailAddress, setDetailAddress] = useState("");
+    const [chatOpen, setChatOpen] = useState(false);
+    const [chatText, setChatText] = useState("");
+    const chatInputRef = useRef<HTMLInputElement>(null);
+    const chatOpenRef = useRef(false);
 
     const setup = useCallback(
         (canvas: HTMLCanvasElement) => {
@@ -120,6 +124,7 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 prevX: number;
                 prevZ: number;
             }>();
+            const chatBubbles = new Map<string, { mesh: Mesh; expiry: number }>();
 
             // ── Rig placeholder (filled when GLB loads) ──
             let rig: AvatarRig | null = null;
@@ -224,6 +229,16 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             }
 
             const onKeyDown = (e: KeyboardEvent) => {
+                if (chatOpenRef.current) {
+                    // Don't capture game keys while chat is open
+                    return;
+                }
+                if (e.key === "Enter") {
+                    chatOpenRef.current = true;
+                    setChatOpen(true);
+                    setTimeout(() => chatInputRef.current?.focus(), 0);
+                    return;
+                }
                 if (e.key.toLowerCase() === "v") {
                     toggleViewMode();
                     return;
@@ -231,6 +246,7 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 keys[e.key.toLowerCase()] = true;
             };
             const onKeyUp = (e: KeyboardEvent) => {
+                if (chatOpenRef.current) return;
                 keys[e.key.toLowerCase()] = false;
             };
             window.addEventListener("keydown", onKeyDown);
@@ -395,6 +411,31 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     remote.prevX = remote.rig.root.position.x;
                     remote.prevZ = remote.rig.root.position.z;
                 }
+
+                // ── Chat bubbles: spawn / expire ──
+                const now = Date.now();
+                for (const [addr, remote] of remoteAvatars) {
+                    if (!remote.rig) continue;
+                    const playerData = remotePlayers.get(addr);
+                    if (!playerData) continue;
+
+                    if (playerData.chatMessage && playerData.chatExpiry && playerData.chatExpiry > now) {
+                        const existing = chatBubbles.get(addr);
+                        if (!existing || existing.expiry !== playerData.chatExpiry) {
+                            // Remove old bubble if any
+                            if (existing) existing.mesh.dispose();
+                            const bubble = buildChatBubble(scene, remote.rig.root, playerData.chatMessage);
+                            chatBubbles.set(addr, { mesh: bubble, expiry: playerData.chatExpiry });
+                        }
+                    }
+                }
+                // Remove expired bubbles
+                for (const [addr, bubble] of chatBubbles) {
+                    if (bubble.expiry <= now) {
+                        bubble.mesh.dispose();
+                        chatBubbles.delete(addr);
+                    }
+                }
             });
 
             // ── Render loop ──
@@ -411,6 +452,8 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     if (remote.rig) remote.rig.root.dispose();
                 }
                 remoteAvatars.clear();
+                for (const [, bubble] of chatBubbles) bubble.mesh.dispose();
+                chatBubbles.clear();
                 scene.dispose();
                 engine.dispose();
                 engineRef.current = null;
@@ -424,6 +467,29 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
         const cleanup = setup(canvasRef.current);
         return cleanup;
     }, [setup]);
+
+    const handleChatSubmit = useCallback(() => {
+        const text = chatText.trim();
+        setChatText("");
+        setChatOpen(false);
+        chatOpenRef.current = false;
+        if (!text) return;
+
+        const wsStore = useWebSocketStore.getState();
+        const localPos = useGamePresenceStore.getState().localPosition;
+        wsStore.sendMessage("broadcastToChannel", {
+            type: "world_chat",
+            text,
+            x: localPos.x,
+            z: localPos.z,
+        });
+    }, [chatText]);
+
+    const handleChatCancel = useCallback(() => {
+        setChatText("");
+        setChatOpen(false);
+        chatOpenRef.current = false;
+    }, []);
 
     return (
         <div className="relative h-full w-full">
@@ -443,6 +509,25 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     <span ref={rendererRef}>WebGL</span>
                 </div>
             </div>
+            {chatOpen && (
+                <div className="absolute bottom-12 left-1/2 -translate-x-1/2">
+                    <input
+                        ref={chatInputRef}
+                        type="text"
+                        value={chatText}
+                        onChange={(e) => setChatText(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter") handleChatSubmit();
+                            if (e.key === "Escape") handleChatCancel();
+                            e.stopPropagation();
+                        }}
+                        onKeyUp={(e) => e.stopPropagation()}
+                        maxLength={100}
+                        placeholder="Type a message... (Enter to send, Esc to cancel)"
+                        className="w-[400px] rounded-lg border border-white/20 bg-black/70 px-4 py-2 text-sm text-white placeholder-white/50 outline-none backdrop-blur-sm"
+                    />
+                </div>
+            )}
             {showDetail && detailAddress && (
                 <AvatarDetailPanel
                     address={detailAddress}

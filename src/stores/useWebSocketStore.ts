@@ -341,6 +341,22 @@ async function handleIncomingMessage(raw: Record<string, unknown>) {
             break;
         }
 
+        case "world_chat": {
+            const { useAuthStore: AuthWC } = await import("./useAuthStore");
+            const myAddrWC = AuthWC.getState().walletAddress;
+            const chatSender = (data.sender as string) || "";
+            if (myAddrWC && chatSender.toLowerCase() === myAddrWC.toLowerCase()) break;
+
+            const localPos = useGamePresenceStore.getState().localPosition;
+            const msgX = data.x as number;
+            const msgZ = data.z as number;
+            const dist = Math.hypot(localPos.x - msgX, localPos.z - msgZ);
+            if (dist <= 5) {
+                useGamePresenceStore.getState().setChatMessage(chatSender, data.text as string);
+            }
+            break;
+        }
+
         case "position": {
             const posAddr = (data.sender as string) || (data.address as string) || "";
             useGamePresenceStore.getState().updateRemotePosition(

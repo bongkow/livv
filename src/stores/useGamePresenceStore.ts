@@ -19,6 +19,8 @@ export interface RemotePlayer {
     vx: number;
     vz: number;
     lastUpdateTime: number;
+    chatMessage?: string;
+    chatExpiry?: number;
 }
 
 interface GamePresenceState {
@@ -32,6 +34,7 @@ interface GamePresenceActions {
     updateRemotePosition: (address: string, x: number, z: number, rotY: number, vx?: number, vz?: number) => void;
     setLocalPosition: (x: number, z: number, rotY: number) => void;
     clearAllRemotePlayers: () => void;
+    setChatMessage: (address: string, text: string) => void;
 }
 
 type GamePresenceStore = GamePresenceState & GamePresenceActions;
@@ -90,5 +93,17 @@ export const useGamePresenceStore = create<GamePresenceStore>()((set, get) => ({
 
     clearAllRemotePlayers: () => {
         set({ remotePlayers: new Map() });
+    },
+
+    setChatMessage: (address: string, text: string) => {
+        const players = new Map(get().remotePlayers);
+        const existing = players.get(address.toLowerCase());
+        if (!existing) return;
+        players.set(address.toLowerCase(), {
+            ...existing,
+            chatMessage: text,
+            chatExpiry: Date.now() + 3000,
+        });
+        set({ remotePlayers: players });
     },
 }));

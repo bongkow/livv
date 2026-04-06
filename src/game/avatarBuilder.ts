@@ -137,6 +137,55 @@ export async function buildAvatar(
     };
 }
 
+// ─── Chat bubble (3D speech bubble above avatar) ───
+
+export function buildChatBubble(
+    scene: Scene,
+    parent: TransformNode,
+    text: string,
+): Mesh {
+    // Measure text to size the bubble
+    const charWidth = 14;
+    const maxChars = 30;
+    const displayText = text.length > maxChars ? text.slice(0, maxChars - 1) + "…" : text;
+    const textWidth = Math.max(displayText.length * charWidth, 80);
+    const canvasWidth = Math.min(textWidth + 40, 512);
+    const planeWidth = (canvasWidth / 512) * 3;
+
+    const plane = MeshBuilder.CreatePlane("chatBubble", { width: planeWidth, height: 0.4 }, scene);
+    plane.position.y = 3.0;
+    plane.parent = parent;
+    plane.billboardMode = Mesh.BILLBOARDMODE_ALL;
+
+    const tex = new DynamicTexture("chatTex", { width: 512, height: 64 }, scene, false);
+    tex.hasAlpha = true;
+    const ctx = tex.getContext() as unknown as CanvasRenderingContext2D;
+    ctx.clearRect(0, 0, 512, 64);
+
+    // Background pill
+    ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+    ctx.beginPath();
+    ctx.roundRect(4, 4, 504, 56, 28);
+    ctx.fill();
+
+    // Text
+    ctx.font = "bold 26px sans-serif";
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(displayText, 256, 32);
+    tex.update();
+
+    const mat = new StandardMaterial("chatMat", scene);
+    mat.diffuseTexture = tex;
+    mat.useAlphaFromDiffuseTexture = true;
+    mat.emissiveColor = Color3.White();
+    mat.disableLighting = true;
+    plane.material = mat;
+
+    return plane;
+}
+
 // ─── Address label (3D text plane) ───
 
 export function buildAddressLabel(
