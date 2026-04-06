@@ -90,6 +90,8 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             camera.upperBetaLimit = Math.PI / 2.05;
             camera.wheelPrecision = 30;
             camera.panningSensibility = 0;
+            // Disable built-in keyboard inputs — we handle WASD/arrows ourselves
+            camera.inputs.removeByType("ArcRotateCameraKeyboardMoveInput");
 
             // ── Lights ──
             const hemi = new HemisphericLight("hemi", new Vector3(0, 1, 0), scene);
@@ -244,17 +246,25 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     return;
                 }
 
-                // Derive forward/right from camera orientation (projected onto XZ)
+                // ── Arrow keys rotate the camera around the avatar ──
+                const ROTATE_SPEED = 2.0; // radians per second
+                const TILT_SPEED = 1.5;
+                if (keys["arrowleft"]) camera.alpha += ROTATE_SPEED * dt;
+                if (keys["arrowright"]) camera.alpha -= ROTATE_SPEED * dt;
+                if (keys["arrowup"]) camera.beta = Math.max(0.3, camera.beta - TILT_SPEED * dt);
+                if (keys["arrowdown"]) camera.beta = Math.min(Math.PI / 2.05, camera.beta + TILT_SPEED * dt);
+
+                // ── WASD moves the character relative to camera facing ──
                 const forward = camera.getForwardRay().direction;
                 forward.y = 0;
                 forward.normalize();
                 const right = Vector3.Cross(forward, Vector3.Up()).normalize();
 
                 const move = Vector3.Zero();
-                if (keys["w"] || keys["arrowup"]) move.addInPlace(forward);
-                if (keys["s"] || keys["arrowdown"]) move.subtractInPlace(forward);
-                if (keys["a"] || keys["arrowleft"]) move.addInPlace(right);
-                if (keys["d"] || keys["arrowright"]) move.subtractInPlace(right);
+                if (keys["w"]) move.addInPlace(forward);
+                if (keys["s"]) move.subtractInPlace(forward);
+                if (keys["a"]) move.addInPlace(right);
+                if (keys["d"]) move.subtractInPlace(right);
 
                 const isMoving = move.length() > 0.001;
 
@@ -291,12 +301,12 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     // Rotate avatar to face movement direction
                     const angle = Math.atan2(move.x, move.z);
                     rig.root.rotation.y = angle;
-
-                    // Camera follows
-                    camera.target.x = rig.root.position.x;
-                    camera.target.y = isFirstPerson ? rig.headBaseY * 0.95 : 1.5;
-                    camera.target.z = rig.root.position.z;
                 }
+
+                // Camera always follows player (needed for arrow key rotation while standing)
+                camera.target.x = rig.root.position.x;
+                camera.target.y = isFirstPerson ? rig.headBaseY * 0.95 : 1.5;
+                camera.target.z = rig.root.position.z;
 
                 // Blend walk/idle animations
                 blendWalkAnimation(rig, isMoving, dt);
