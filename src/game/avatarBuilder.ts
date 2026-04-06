@@ -68,6 +68,9 @@ export async function buildAvatar(
     // Scale down — HVGirl is large by default (canonical scale is 0.1)
     root.scaling.setAll(0.1);
 
+    // GLB models use rotationQuaternion by default — clear it so Euler .rotation.y works
+    root.rotationQuaternion = null;
+
     // Find a head-ish mesh for camera targeting
     let headMesh: Mesh | null = null;
     for (const m of result.meshes) {
