@@ -97,6 +97,7 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
 
             const scene = new Scene(engine);
             scene.clearColor = new Color4(0.53, 0.81, 0.98, 1);
+            scene.environmentIntensity = 0.6;
 
             // ── Camera ──
             const camera = new ArcRotateCamera(
@@ -117,17 +118,18 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
 
             // ── Lights ──
             const hemi = new HemisphericLight("hemi", new Vector3(0, 1, 0), scene);
-            hemi.intensity = 0.6;
+            hemi.intensity = 0.7;
 
             const sun = new DirectionalLight("sun", new Vector3(-1, -2, 1), scene);
-            sun.intensity = 0.8;
+            sun.intensity = 1.0;
             sun.position = new Vector3(20, 40, -20);
 
-            const shadowGen = new ShadowGenerator(1024, sun);
+            const shadowGen = new ShadowGenerator(2048, sun);
             shadowGen.useBlurExponentialShadowMap = true;
+            shadowGen.blurKernel = 32;
 
             // ── World ──
-            const { colliders, insects } = buildWorld(scene);
+            const { colliders, insects } = buildWorld(scene, shadowGen);
 
             // ── Player ──
             const rig = buildAvatar(scene, walletAddress, shadowGen);

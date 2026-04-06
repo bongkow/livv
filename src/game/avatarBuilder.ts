@@ -1,9 +1,9 @@
 /*
  * @Module: AvatarBuilder
- * @Purpose: Shared 3D avatar builder — deterministic human-like Babylon.js character
+ * @Purpose: Shared 3D avatar builder — realistic human-like Babylon.js character
  * @Logic: Parses address hex bytes to select skin tone, hair color, eye color, shirt hue,
- *         and facial feature proportions. Builds full 3D character with anatomical detail.
- *         Limbs use pivot TransformNodes for walk animation.
+ *         and facial feature proportions. Builds character with capsule-based limbs,
+ *         organic torso, and PBR materials for realistic appearance.
  * @Interfaces: buildAvatar(scene, address, shadow?) → AvatarRig, buildAddressLabel(scene, parent, address)
  * @Constraints: Requires @babylonjs/core.
  */
@@ -12,6 +12,7 @@ import {
     Scene,
     MeshBuilder,
     StandardMaterial,
+    PBRMaterial,
     TransformNode,
     DynamicTexture,
     Color3,
@@ -20,7 +21,7 @@ import {
 } from "@babylonjs/core";
 import { truncateAddress } from "@/utils/truncateAddress";
 
-// ─── Palette (matches faceAvatar.ts / bodyAvatar.ts) ───
+// ─── Palette ───
 
 const SKIN_TONES = [
     "#FFDBB4", "#EDB98A", "#D08B5B", "#AE5D29",
@@ -41,61 +42,62 @@ function parseAddressBytes(address: string): number[] {
     return bytes;
 }
 
-// ─── Material cache (avoids creating duplicate materials) ───
+// ─── PBR skin material ───
+
+function makeSkinMat(scene: Scene, name: string, color: Color3): PBRMaterial {
+    const mat = new PBRMaterial(name, scene);
+    mat.albedoColor = color;
+    mat.roughness = 0.65;
+    mat.metallic = 0;
+    mat.subSurface.isTranslucencyEnabled = true;
+    mat.subSurface.translucencyIntensity = 0.3;
+    mat.subSurface.tintColor = color.scale(0.8);
+    return mat;
+}
+
+// ─── PBR cloth material ───
+
+function makeClothMat(scene: Scene, name: string, color: Color3, roughness = 0.85): PBRMaterial {
+    const mat = new PBRMaterial(name, scene);
+    mat.albedoColor = color;
+    mat.roughness = roughness;
+    mat.metallic = 0;
+    return mat;
+}
+
+// ─── Simple opaque material (for small details) ───
 
 function makeMat(scene: Scene, name: string, color: Color3): StandardMaterial {
     const mat = new StandardMaterial(name, scene);
     mat.diffuseColor = color;
     mat.specularColor = new Color3(0.15, 0.15, 0.15);
     mat.alpha = 1.0;
-    mat.transparencyMode = 0; // MATERIAL_OPAQUE
+    mat.transparencyMode = 0;
     return mat;
 }
 
-// ─── Limb builder helpers ───
+// ─── Capsule limb helper ───
 
-function createLimb(
+function createCapsuleLimb(
     scene: Scene,
     name: string,
     parent: TransformNode,
-    mat: StandardMaterial,
+    mat: PBRMaterial | StandardMaterial,
     height: number,
-    diameterTop: number,
-    diameterBottom: number,
+    radius: number,
     x: number,
     y: number,
     z: number,
 ): Mesh {
-    const limb = MeshBuilder.CreateCylinder(
+    const limb = MeshBuilder.CreateCapsule(
         name,
-        { height, diameterTop, diameterBottom, tessellation: 12 },
+        { height, radius, tessellation: 16, subdivisions: 6, capSubdivisions: 8 },
         scene,
     );
     limb.position.set(x, y, z);
     limb.parent = parent;
     limb.material = mat;
     return limb;
-}
-
-function createJoint(
-    scene: Scene,
-    name: string,
-    parent: TransformNode,
-    mat: StandardMaterial,
-    diameter: number,
-    x: number,
-    y: number,
-    z: number,
-): Mesh {
-    const joint = MeshBuilder.CreateSphere(
-        name,
-        { diameter, segments: 8 },
-        scene,
-    );
-    joint.position.set(x, y, z);
-    joint.parent = parent;
-    joint.material = mat;
-    return joint;
 }
 
 // ─── Avatar rig interface ───
@@ -123,36 +125,60 @@ export function buildAvatar(
     const skinColor = Color3.FromHexString(skinTone);
     const hairCol = Color3.FromHexString(hairColor);
 
-    // ── Gender & height (derived from address) ──
+    // ── Gender & height ──
     const isFemale = bytes[1] % 2 === 0;
     const heightByte = bytes[14] ?? 128;
     const heightBase = isFemale ? 1.55 : 1.70;
-    const heightRange = isFemale ? 0.20 : 0.20; // female: 1.55–1.75m, male: 1.70–1.90m
+    const heightRange = 0.20;
     const heightScale = (heightBase + (heightByte / 255) * heightRange) / 1.82;
 
     // ── Gender-dependent body proportions ──
-    const shoulderX = isFemale ? 0.24 : 0.30;
-    const hipX = isFemale ? 0.14 : 0.12;
-    const limbScale = isFemale ? 0.85 : 1.0; // thinner limbs for female
+    const shoulderX = isFemale ? 0.22 : 0.28;
+    const hipX = isFemale ? 0.13 : 0.11;
+    const limbScale = isFemale ? 0.82 : 1.0;
 
     const root = new TransformNode("player", scene);
 
     // ── Materials ──
-    const skinMat = makeMat(scene, "skinMat", skinColor);
-    const hairMat = makeMat(scene, "hairMat", hairCol);
+    const skinMat = makeSkinMat(scene, "skinMat", skinColor);
+    const hairMat = makeClothMat(scene, "hairMat", hairCol, 0.7);
     const hue = ((bytes[12] ?? 128) / 255) * 360;
     const shirtColor = Color3.FromHSV(hue, 0.45, 0.7);
-    const shirtMat = makeMat(scene, "shirtMat", shirtColor);
-    const pantsMat = makeMat(scene, "pantsMat", new Color3(0.15, 0.15, 0.28));
-    const shoeMat = makeMat(scene, "shoeMat", new Color3(0.22, 0.22, 0.22));
+    const shirtMat = makeClothMat(scene, "shirtMat", shirtColor);
+    const pantsMat = makeClothMat(scene, "pantsMat", new Color3(0.15, 0.15, 0.28));
+    const shoeMat = makeClothMat(scene, "shoeMat", new Color3(0.22, 0.22, 0.22), 0.5);
 
     // ═══════════════════════════════════════
-    //  HEAD — fully 3D face from address bytes
-    //  b[5]=eye shape, b[6]=eye color, b[7]=nose,
-    //  b[8]=mouth, b[11]=accessory
+    //  HEAD — organic shape with jaw and chin
     // ═══════════════════════════════════════
 
     const headY = 1.82;
+
+    // Cranium — slightly elongated sphere
+    const head = MeshBuilder.CreateSphere("head", {
+        diameterX: 0.50, diameterY: 0.56, diameterZ: 0.50, segments: 16,
+    }, scene);
+    head.position.y = headY;
+    head.parent = root;
+    head.material = skinMat;
+
+    // Jaw — flattened sphere extending below the cranium
+    const jaw = MeshBuilder.CreateSphere("jaw", {
+        diameterX: 0.40, diameterY: 0.26, diameterZ: 0.38, segments: 12,
+    }, scene);
+    jaw.position.set(0, headY - 0.18, 0.02);
+    jaw.parent = root;
+    jaw.material = skinMat;
+
+    // Chin
+    const chin = MeshBuilder.CreateSphere("chin", {
+        diameterX: 0.14, diameterY: 0.10, diameterZ: 0.12, segments: 8,
+    }, scene);
+    chin.position.set(0, headY - 0.26, 0.12);
+    chin.parent = root;
+    chin.material = skinMat;
+
+    // ── Eyes ──
     const EYE_COLORS = [
         "#2E86C1", "#1B4F72", "#27AE60", "#6C3483",
         "#784212", "#1C1C1C",
@@ -160,58 +186,49 @@ export function buildAvatar(
     const eyeColorHex = EYE_COLORS[bytes[6] % EYE_COLORS.length];
     const eyeColor = Color3.FromHexString(eyeColorHex);
 
-    // Cranium
-    const head = MeshBuilder.CreateSphere("head", { diameterX: 0.52, diameterY: 0.58, diameterZ: 0.52, segments: 12 }, scene);
-    head.position.y = headY;
-    head.parent = root;
-    head.material = skinMat;
-
-    // ── Eyes ──
-    // Eye size varies by b[5]. Uses flattened ellipsoids (thin Z) so they
-    // sit flush against the head surface instead of protruding.
     const eyeSizeVariant = bytes[5] % 4;
-    const eyeScale = 0.06 + eyeSizeVariant * 0.006; // 0.06 – 0.078 (smaller range)
-    const eyeSpacing = 0.09;  // tighter — keeps edges on the face
+    const eyeScale = 0.055 + eyeSizeVariant * 0.005;
+    const eyeSpacing = 0.085;
     const eyeYOffset = -0.02;
-    const eyeZOffset = 0.24;  // right on the head surface
+    const eyeZOffset = 0.23;
 
     const whiteMat = makeMat(scene, "eyeWhiteMat", Color3.White());
-    whiteMat.specularColor = new Color3(0.3, 0.3, 0.3);
+    whiteMat.specularColor = new Color3(0.4, 0.4, 0.4);
     const irisMat = makeMat(scene, "irisMat", eyeColor);
-    const pupilMat = makeMat(scene, "pupilMat", new Color3(0.05, 0.05, 0.05));
+    const pupilMat = makeMat(scene, "pupilMat", new Color3(0.02, 0.02, 0.02));
 
     for (const side of [-1, 1]) {
         const prefix = side === -1 ? "left" : "right";
         const ex = side * eyeSpacing;
 
-        // Sclera — compact disc, fully on the face
+        // Sclera
         const sclera = MeshBuilder.CreateSphere(`${prefix}Sclera`, {
             diameterX: eyeScale * 1.8,
-            diameterY: eyeScale * 1.2,
+            diameterY: eyeScale * 1.1,
             diameterZ: eyeScale * 0.35,
-            segments: 10,
+            segments: 12,
         }, scene);
         sclera.position.set(ex, headY + eyeYOffset, eyeZOffset);
         sclera.parent = root;
         sclera.material = whiteMat;
 
-        // Iris — smaller disc sitting just in front of sclera
+        // Iris
         const iris = MeshBuilder.CreateSphere(`${prefix}Iris`, {
-            diameterX: eyeScale * 0.9,
-            diameterY: eyeScale * 0.9,
+            diameterX: eyeScale * 0.85,
+            diameterY: eyeScale * 0.85,
             diameterZ: eyeScale * 0.2,
-            segments: 10,
+            segments: 12,
         }, scene);
         iris.position.set(ex, headY + eyeYOffset, eyeZOffset + eyeScale * 0.12);
         iris.parent = root;
         iris.material = irisMat;
 
-        // Pupil — tiny disc on top of iris
+        // Pupil
         const pupil = MeshBuilder.CreateSphere(`${prefix}Pupil`, {
-            diameterX: eyeScale * 0.45,
-            diameterY: eyeScale * 0.45,
-            diameterZ: eyeScale * 0.15,
-            segments: 8,
+            diameterX: eyeScale * 0.4,
+            diameterY: eyeScale * 0.4,
+            diameterZ: eyeScale * 0.12,
+            segments: 10,
         }, scene);
         pupil.position.set(ex, headY + eyeYOffset, eyeZOffset + eyeScale * 0.18);
         pupil.parent = root;
@@ -219,197 +236,221 @@ export function buildAvatar(
     }
 
     // ── Eyebrows ──
-    // Multiple traits derived from address bytes:
-    //   b[10] = shape (flat / arched / angled / furrowed)
-    //   b[9]  = thickness
-    //   b[11] = width
-    //   b[13] = vertical offset
-    const browShapeVariant = bytes[10] % 4; // 0=flat, 1=arched, 2=angled, 3=furrowed
-    const browThicknessVariant = bytes[9] % 3; // 0=thin, 1=medium, 2=thick
-    const browWidthVariant = bytes[11] % 3; // 0=narrow, 1=medium, 2=wide
-    const browVerticalVariant = bytes[13] % 3; // 0=low, 1=mid, 2=high
+    const browShapeVariant = bytes[10] % 4;
+    const browThicknessVariant = bytes[9] % 3;
+    const browWidthVariant = bytes[11] % 3;
+    const browVerticalVariant = bytes[13] % 3;
 
     const browAngle =
-        browShapeVariant === 1 ? -0.18 :  // arched — outer end tilts down
-        browShapeVariant === 2 ? 0.15 :   // angled — outer end tilts up
-        browShapeVariant === 3 ? 0.25 :   // furrowed — strong inward tilt
-        0;                                // flat
-    const browThickness = 0.012 + browThicknessVariant * 0.006; // 0.012 – 0.024
-    const browWidth = 0.09 + browWidthVariant * 0.015;          // 0.09 – 0.12
-    const browYExtra = -0.01 + browVerticalVariant * 0.01;      // -0.01 – 0.01
+        browShapeVariant === 1 ? -0.18 :
+        browShapeVariant === 2 ? 0.15 :
+        browShapeVariant === 3 ? 0.25 :
+        0;
+    const browThickness = 0.012 + browThicknessVariant * 0.005;
+    const browWidth = 0.085 + browWidthVariant * 0.012;
+    const browYExtra = -0.01 + browVerticalVariant * 0.01;
 
-    const browMat = makeMat(scene, "browMat", hairCol.scale(0.7));
+    const browMat = makeClothMat(scene, "browMat", hairCol.scale(0.7));
 
     for (const side of [-1, 1]) {
         const prefix = side === -1 ? "left" : "right";
-        const brow = MeshBuilder.CreateBox(`${prefix}Brow`, {
-            width: browWidth,
-            height: browThickness,
-            depth: 0.02,
+        const brow = MeshBuilder.CreateCapsule(`${prefix}Brow`, {
+            height: browWidth,
+            radius: browThickness,
+            tessellation: 8,
+            subdivisions: 2,
+            capSubdivisions: 4,
         }, scene);
         brow.position.set(
             side * eyeSpacing,
             headY + eyeYOffset + eyeScale * 0.9 + browYExtra,
             eyeZOffset + 0.02,
         );
-        brow.rotation.z = side * browAngle;
+        brow.rotation.z = Math.PI / 2 + side * browAngle;
         brow.parent = root;
         brow.material = browMat;
     }
 
     // ── Nose ──
-    // Size varies by b[7]
     const noseVariant = bytes[7] % 4;
-    const noseWidth = 0.04 + noseVariant * 0.006;
-    const noseHeight = 0.05 + noseVariant * 0.005;
-    const noseMat = makeMat(scene, "noseMat", skinColor.scale(0.88));
+    const noseWidth = 0.035 + noseVariant * 0.005;
+    const noseHeight = 0.045 + noseVariant * 0.004;
+    const noseMat = makeSkinMat(scene, "noseMat", skinColor.scale(0.92));
 
-    const nose = MeshBuilder.CreateSphere("nose", {
-        diameterX: noseWidth * 2,
-        diameterY: noseHeight * 2,
-        diameterZ: 0.05,
-        segments: 8,
+    // Nose bridge
+    const noseBridge = MeshBuilder.CreateCapsule("noseBridge", {
+        height: noseHeight * 2,
+        radius: noseWidth * 0.6,
+        tessellation: 10,
+        subdivisions: 3,
+        capSubdivisions: 6,
     }, scene);
-    nose.position.set(0, headY - 0.07, eyeZOffset + 0.03);
-    nose.parent = root;
-    nose.material = noseMat;
+    noseBridge.position.set(0, headY - 0.05, eyeZOffset + 0.01);
+    noseBridge.parent = root;
+    noseBridge.material = noseMat;
+
+    // Nose tip
+    const noseTip = MeshBuilder.CreateSphere("noseTip", {
+        diameterX: noseWidth * 2.2,
+        diameterY: noseHeight * 1.2,
+        diameterZ: 0.04,
+        segments: 10,
+    }, scene);
+    noseTip.position.set(0, headY - 0.08, eyeZOffset + 0.04);
+    noseTip.parent = root;
+    noseTip.material = noseMat;
 
     // ── Mouth ──
-    // Shape varies by b[8]: 0=smile, 1=neutral, 2=wide smile, 3=small
     const mouthVariant = bytes[8] % 4;
-    const mouthWidth = mouthVariant === 2 ? 0.10 : mouthVariant === 3 ? 0.05 : 0.07;
-    const mouthMat = makeMat(scene, "mouthMat", new Color3(0.75, 0.22, 0.18));
+    const mouthWidth = mouthVariant === 2 ? 0.09 : mouthVariant === 3 ? 0.045 : 0.065;
+    const mouthMat = makeMat(scene, "mouthMat", new Color3(0.7, 0.2, 0.18));
 
-    const mouth = MeshBuilder.CreateBox("mouth", {
-        width: mouthWidth,
-        height: 0.015,
-        depth: 0.02,
+    // Lips using capsule for smoother shape
+    const upperLip = MeshBuilder.CreateCapsule("upperLip", {
+        height: mouthWidth * 2,
+        radius: 0.012,
+        tessellation: 10,
+        subdivisions: 2,
+        capSubdivisions: 4,
     }, scene);
-    mouth.position.set(0, headY - 0.14, eyeZOffset);
-    mouth.parent = root;
-    mouth.material = mouthMat;
+    upperLip.position.set(0, headY - 0.155, eyeZOffset - 0.01);
+    upperLip.rotation.z = Math.PI / 2;
+    upperLip.parent = root;
+    upperLip.material = mouthMat;
 
-    // Smile curve — slight rotation for smile variants
-    if (mouthVariant === 0 || mouthVariant === 2) {
-        // Add small spheres at corners angled down for a smile
-        for (const side of [-1, 1]) {
-            const corner = MeshBuilder.CreateSphere(`mouthCorner${side}`, { diameter: 0.018, segments: 6 }, scene);
-            corner.position.set(side * (mouthWidth / 2 + 0.005), headY - 0.145, eyeZOffset);
-            corner.parent = root;
-            corner.material = mouthMat;
-        }
-    }
+    const lowerLip = MeshBuilder.CreateCapsule("lowerLip", {
+        height: mouthWidth * 1.6,
+        radius: 0.014,
+        tessellation: 10,
+        subdivisions: 2,
+        capSubdivisions: 4,
+    }, scene);
+    lowerLip.position.set(0, headY - 0.175, eyeZOffset - 0.015);
+    lowerLip.rotation.z = Math.PI / 2;
+    lowerLip.parent = root;
+    lowerLip.material = mouthMat;
 
     // ── Ears ──
     for (const side of [-1, 1]) {
         const ear = MeshBuilder.CreateSphere(side === -1 ? "leftEar" : "rightEar", {
-            diameterX: 0.06, diameterY: 0.10, diameterZ: 0.04, segments: 6,
+            diameterX: 0.05, diameterY: 0.10, diameterZ: 0.035, segments: 8,
         }, scene);
-        ear.position.set(side * 0.26, headY - 0.02, 0);
+        ear.position.set(side * 0.25, headY - 0.02, 0);
         ear.parent = root;
         ear.material = skinMat;
     }
 
-    // ── Hair — multiple overlapping spheres for a natural cap ──
-    // Top of head
-    const hairTop = MeshBuilder.CreateSphere("hairTop", { diameterX: 0.56, diameterY: 0.28, diameterZ: 0.56, segments: 10 }, scene);
-    hairTop.position.set(0, headY + 0.20, 0);
+    // ── Hair — overlapping spheres for natural cap ──
+    const hairTop = MeshBuilder.CreateSphere("hairTop", {
+        diameterX: 0.54, diameterY: 0.26, diameterZ: 0.54, segments: 12,
+    }, scene);
+    hairTop.position.set(0, headY + 0.20, -0.01);
     hairTop.parent = root;
     hairTop.material = hairMat;
 
-    // Back of head
-    const hairBack = MeshBuilder.CreateSphere("hairBack", { diameterX: 0.54, diameterY: 0.50, diameterZ: 0.30, segments: 10 }, scene);
+    const hairBack = MeshBuilder.CreateSphere("hairBack", {
+        diameterX: 0.52, diameterY: 0.48, diameterZ: 0.28, segments: 12,
+    }, scene);
     hairBack.position.set(0, headY + 0.06, -0.16);
     hairBack.parent = root;
     hairBack.material = hairMat;
 
-    // Sides
     for (const side of [-1, 1]) {
         const hairSide = MeshBuilder.CreateSphere(side === -1 ? "hairLeft" : "hairRight", {
-            diameterX: 0.18, diameterY: 0.36, diameterZ: 0.42, segments: 8,
+            diameterX: 0.16, diameterY: 0.34, diameterZ: 0.40, segments: 10,
         }, scene);
-        hairSide.position.set(side * 0.22, headY + 0.08, -0.06);
+        hairSide.position.set(side * 0.21, headY + 0.08, -0.06);
         hairSide.parent = root;
         hairSide.material = hairMat;
     }
 
-    // ═══════════════════════════════════════
-    //  NECK (y ≈ 1.45 – 1.58)
-    // ═══════════════════════════════════════
+    // Front fringe
+    const hairFront = MeshBuilder.CreateSphere("hairFront", {
+        diameterX: 0.48, diameterY: 0.12, diameterZ: 0.20, segments: 10,
+    }, scene);
+    hairFront.position.set(0, headY + 0.18, 0.12);
+    hairFront.parent = root;
+    hairFront.material = hairMat;
 
-    const neckDiam = isFemale ? 0.12 : 0.16;
-    createLimb(scene, "neck", root, skinMat, 0.16, neckDiam * 0.875, neckDiam, 0, 1.50, 0);
-
     // ═══════════════════════════════════════
-    //  TORSO (y ≈ 0.95 – 1.45)
-    //  Proportions differ by gender:
-    //    Male:   broad shoulders → narrow waist
-    //    Female: moderate shoulders → narrow waist → wider hips
+    //  NECK — capsule for smooth connection
     // ═══════════════════════════════════════
 
-    // Upper torso
-    const upperTorso = MeshBuilder.CreateCylinder(
-        "upperTorso",
-        {
-            height: 0.30,
-            diameterTop: isFemale ? 0.40 : 0.48,
-            diameterBottom: isFemale ? 0.44 : 0.52,
-            tessellation: 12,
-        },
-        scene,
-    );
-    upperTorso.position.y = 1.33;
-    upperTorso.parent = root;
-    upperTorso.material = shirtMat;
+    const neckDiam = isFemale ? 0.06 : 0.075;
+    createCapsuleLimb(scene, "neck", root, skinMat, 0.22, neckDiam, 0, 1.52, 0);
 
-    // Mid torso — chest / core
-    const midTorso = MeshBuilder.CreateCylinder(
-        "midTorso",
-        {
-            height: 0.28,
-            diameterTop: isFemale ? 0.44 : 0.52,
-            diameterBottom: isFemale ? 0.36 : 0.44,
-            tessellation: 12,
-        },
-        scene,
-    );
-    midTorso.position.y = 1.08;
+    // ═══════════════════════════════════════
+    //  TORSO — overlapping spheres for organic shape
+    // ═══════════════════════════════════════
+
+    // Upper chest
+    const chest = MeshBuilder.CreateSphere("chest", {
+        diameterX: isFemale ? 0.42 : 0.50,
+        diameterY: 0.32,
+        diameterZ: isFemale ? 0.30 : 0.32,
+        segments: 14,
+    }, scene);
+    chest.position.y = 1.32;
+    chest.parent = root;
+    chest.material = shirtMat;
+
+    // Mid torso
+    const midTorso = MeshBuilder.CreateSphere("midTorso", {
+        diameterX: isFemale ? 0.38 : 0.46,
+        diameterY: 0.28,
+        diameterZ: isFemale ? 0.26 : 0.30,
+        segments: 14,
+    }, scene);
+    midTorso.position.y = 1.12;
     midTorso.parent = root;
     midTorso.material = shirtMat;
 
-    // Lower torso / hips
-    const lowerTorso = MeshBuilder.CreateCylinder(
-        "lowerTorso",
-        {
-            height: 0.18,
-            diameterTop: isFemale ? 0.38 : 0.44,
-            diameterBottom: isFemale ? 0.46 : 0.46,
-            tessellation: 12,
-        },
-        scene,
-    );
-    lowerTorso.position.y = 0.90;
-    lowerTorso.parent = root;
-    lowerTorso.material = pantsMat;
+    // Waist connector
+    const waist = MeshBuilder.CreateSphere("waist", {
+        diameterX: isFemale ? 0.32 : 0.40,
+        diameterY: 0.20,
+        diameterZ: isFemale ? 0.24 : 0.28,
+        segments: 12,
+    }, scene);
+    waist.position.y = 0.98;
+    waist.parent = root;
+    waist.material = shirtMat;
+
+    // Hips
+    const hips = MeshBuilder.CreateSphere("hips", {
+        diameterX: isFemale ? 0.42 : 0.40,
+        diameterY: 0.22,
+        diameterZ: isFemale ? 0.30 : 0.28,
+        segments: 12,
+    }, scene);
+    hips.position.y = 0.87;
+    hips.parent = root;
+    hips.material = pantsMat;
 
     // ═══════════════════════════════════════
-    //  SHOULDERS (spherical joints)
+    //  SHOULDERS — smooth spherical joints
     // ═══════════════════════════════════════
 
-    const shoulderY = 1.40;
-    const shoulderJointSize = isFemale ? 0.13 : 0.16;
-    createJoint(scene, "leftShoulder", root, shirtMat, shoulderJointSize, -shoulderX, shoulderY, 0);
-    createJoint(scene, "rightShoulder", root, shirtMat, shoulderJointSize, shoulderX, shoulderY, 0);
+    const shoulderY = 1.38;
+    const shoulderSize = isFemale ? 0.10 : 0.13;
+    for (const side of [-1, 1]) {
+        const shoulder = MeshBuilder.CreateSphere(
+            side === -1 ? "leftShoulder" : "rightShoulder",
+            { diameter: shoulderSize, segments: 10 },
+            scene,
+        );
+        shoulder.position.set(side * shoulderX, shoulderY, 0);
+        shoulder.parent = root;
+        shoulder.material = shirtMat;
+    }
 
     // ═══════════════════════════════════════
-    //  ARMS — pivot-based for walk animation
-    //  Each arm is parented to a pivot at the shoulder so
-    //  rotating the pivot swings the entire arm.
+    //  ARMS — capsule-based for smooth rounded limbs
     // ═══════════════════════════════════════
 
-    const armUpperLen = isFemale ? 0.26 : 0.30;
-    const armLowerLen = isFemale ? 0.24 : 0.28;
-    const armDiamScale = limbScale;
+    const armUpperLen = isFemale ? 0.30 : 0.34;
+    const armLowerLen = isFemale ? 0.28 : 0.32;
+    const armRadius = 0.045 * limbScale;
 
     const leftArmPivot = new TransformNode("leftArmPivot", scene);
     leftArmPivot.position.set(-shoulderX, shoulderY, 0);
@@ -423,28 +464,25 @@ export function buildAvatar(
         const prefix = side === -1 ? "left" : "right";
         const pivot = side === -1 ? leftArmPivot : rightArmPivot;
 
-        // Upper arm — relative to pivot (0, down from shoulder, 0)
-        createLimb(scene, `${prefix}UpperArm`, pivot, skinMat,
-            armUpperLen, 0.12 * armDiamScale, 0.11 * armDiamScale,
-            0, -armUpperLen / 2 - 0.06, 0);
+        // Upper arm — capsule
+        createCapsuleLimb(scene, `${prefix}UpperArm`, pivot, skinMat,
+            armUpperLen, armRadius,
+            0, -armUpperLen / 2 - 0.04, 0);
 
-        // Elbow joint
-        const elbowRelY = -armUpperLen - 0.06;
-        createJoint(scene, `${prefix}Elbow`, pivot, skinMat, 0.12 * armDiamScale, 0, elbowRelY, 0);
-
-        // Forearm
-        createLimb(scene, `${prefix}Forearm`, pivot, skinMat,
-            armLowerLen, 0.10 * armDiamScale, 0.08 * armDiamScale,
+        // Forearm — capsule (slightly thinner)
+        const elbowRelY = -armUpperLen - 0.04;
+        createCapsuleLimb(scene, `${prefix}Forearm`, pivot, skinMat,
+            armLowerLen, armRadius * 0.88,
             0, elbowRelY - armLowerLen / 2, 0);
 
-        // Hand — flattened sphere
+        // Hand — organic sphere
         const handRelY = elbowRelY - armLowerLen;
         const hand = MeshBuilder.CreateSphere(
             `${prefix}Hand`, {
-                diameterX: 0.10 * limbScale,
-                diameterY: 0.12 * limbScale,
-                diameterZ: 0.06 * limbScale,
-                segments: 8,
+                diameterX: 0.08 * limbScale,
+                diameterY: 0.10 * limbScale,
+                diameterZ: 0.05 * limbScale,
+                segments: 10,
             }, scene,
         );
         hand.position.set(0, handRelY, 0);
@@ -453,13 +491,13 @@ export function buildAvatar(
     }
 
     // ═══════════════════════════════════════
-    //  LEGS — pivot-based for walk animation
-    //  Each leg is parented to a pivot at the hip.
+    //  LEGS — capsule-based for smooth rounded limbs
     // ═══════════════════════════════════════
 
     const hipY = 0.82;
-    const legUpperLen = 0.38;
-    const legLowerLen = 0.36;
+    const legUpperLen = 0.40;
+    const legLowerLen = 0.38;
+    const legRadius = 0.055 * limbScale;
 
     const leftLegPivot = new TransformNode("leftLegPivot", scene);
     leftLegPivot.position.set(-hipX, hipY, 0);
@@ -473,39 +511,31 @@ export function buildAvatar(
         const prefix = side === -1 ? "left" : "right";
         const pivot = side === -1 ? leftLegPivot : rightLegPivot;
 
-        // Hip joint — at pivot origin
-        createJoint(scene, `${prefix}Hip`, pivot, pantsMat, 0.15 * limbScale, 0, 0, 0);
+        // Thigh — capsule
+        createCapsuleLimb(scene, `${prefix}Thigh`, pivot, pantsMat,
+            legUpperLen, legRadius,
+            0, -legUpperLen / 2 - 0.02, 0);
 
-        // Upper leg (thigh) — relative to pivot
-        createLimb(scene, `${prefix}Thigh`, pivot, pantsMat,
-            legUpperLen, 0.15 * limbScale, 0.13 * limbScale,
-            0, -legUpperLen / 2 - 0.04, 0);
-
-        // Knee joint
-        const kneeRelY = -legUpperLen - 0.04;
-        createJoint(scene, `${prefix}Knee`, pivot, pantsMat, 0.13 * limbScale, 0, kneeRelY, 0);
-
-        // Lower leg (shin)
-        createLimb(scene, `${prefix}Shin`, pivot, pantsMat,
-            legLowerLen, 0.12 * limbScale, 0.09 * limbScale,
+        // Shin — capsule (slightly thinner)
+        const kneeRelY = -legUpperLen - 0.02;
+        createCapsuleLimb(scene, `${prefix}Shin`, pivot, pantsMat,
+            legLowerLen, legRadius * 0.85,
             0, kneeRelY - legLowerLen / 2, 0);
 
-        // Ankle
+        // Foot — capsule oriented forward
         const ankleRelY = kneeRelY - legLowerLen;
-        createJoint(scene, `${prefix}Ankle`, pivot, skinMat, 0.09 * limbScale, 0, ankleRelY, 0);
-
-        // Foot — elongated box, extends forward
-        const foot = MeshBuilder.CreateBox(
+        const foot = MeshBuilder.CreateCapsule(
             `${prefix}Foot`,
-            { width: 0.12 * limbScale, height: 0.06, depth: 0.22 * limbScale },
+            { height: 0.20 * limbScale, radius: 0.04, tessellation: 10, subdivisions: 3, capSubdivisions: 6 },
             scene,
         );
-        foot.position.set(0, ankleRelY - 0.03, 0.04);
+        foot.position.set(0, ankleRelY - 0.02, 0.04);
+        foot.rotation.x = Math.PI / 2; // orient forward
         foot.parent = pivot;
         foot.material = shoeMat;
     }
 
-    // ── Ensure all meshes are fully opaque (prevent vertex-alpha transparency) ──
+    // ── Ensure all meshes are fully opaque ──
     root.getChildMeshes().forEach((m) => {
         m.hasVertexAlpha = false;
     });
