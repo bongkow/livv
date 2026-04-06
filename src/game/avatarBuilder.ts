@@ -31,6 +31,7 @@ export interface AvatarRig {
     idleAnim: AnimationGroup | null;
     walkAnim: AnimationGroup | null;
     runAnim: AnimationGroup | null;
+    walkWeight: number;
 }
 
 // ─── Animation blending helper ───
@@ -39,22 +40,13 @@ export function blendWalkAnimation(rig: AvatarRig, isMoving: boolean, dt: number
     if (!rig.idleAnim || !rig.walkAnim) return;
 
     if (isMoving) {
-        // Blend to walk
-        rig.walkAnim.setWeightForAllAnimatables(
-            Math.min(1, (rig.walkAnim.weight ?? 0) + dt * 6),
-        );
-        rig.idleAnim.setWeightForAllAnimatables(
-            Math.max(0, (rig.idleAnim.weight ?? 1) - dt * 6),
-        );
+        rig.walkWeight = Math.min(1, rig.walkWeight + dt * 6);
     } else {
-        // Blend to idle
-        rig.idleAnim.setWeightForAllAnimatables(
-            Math.min(1, (rig.idleAnim.weight ?? 0) + dt * 6),
-        );
-        rig.walkAnim.setWeightForAllAnimatables(
-            Math.max(0, (rig.walkAnim.weight ?? 1) - dt * 6),
-        );
+        rig.walkWeight = Math.max(0, rig.walkWeight - dt * 6);
     }
+
+    rig.walkAnim.setWeightForAllAnimatables(rig.walkWeight);
+    rig.idleAnim.setWeightForAllAnimatables(1 - rig.walkWeight);
 }
 
 // ─── Avatar builder (loads HVGirl.glb from Babylon.js CDN) ───
@@ -138,6 +130,7 @@ export async function buildAvatar(
         idleAnim,
         walkAnim,
         runAnim,
+        walkWeight: 0,
     };
 }
 
