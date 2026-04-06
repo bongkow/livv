@@ -66,7 +66,7 @@ export async function buildAvatar(
 ): Promise<AvatarRig> {
     const result = await SceneLoader.ImportMeshAsync(
         "",
-        "https://assets.babylonjs.com/meshes/",
+        "/models/",
         "HVGirl.glb",
         scene,
     );
