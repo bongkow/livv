@@ -88,8 +88,7 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
             camera.lowerRadiusLimit = 0.1;
             camera.upperRadiusLimit = 0.1;
             camera.radius = 0.1;
-            camera.upperBetaLimit = Math.PI / 2.05;
-            camera.beta = Math.PI / 2.2; // slight downward angle
+            camera.beta = Math.PI / 2; // eye level — looking straight ahead
 
             // ── Lights ──
             const hemi = new HemisphericLight("hemi", new Vector3(0, 1, 0), scene);
@@ -210,13 +209,13 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                     camera.radius = FIRST_PERSON_RADIUS;
                     camera.lowerRadiusLimit = FIRST_PERSON_RADIUS;
                     camera.upperRadiusLimit = FIRST_PERSON_RADIUS;
-                    camera.beta = Math.PI / 2.2;
+                    camera.beta = Math.PI / 2;
                     setAvatarVisibility(false);
                 } else {
                     camera.radius = THIRD_PERSON_RADIUS;
                     camera.lowerRadiusLimit = THIRD_PERSON_RADIUS;
                     camera.upperRadiusLimit = THIRD_PERSON_RADIUS;
-                    camera.beta = Math.PI / 3.5;
+                    camera.beta = Math.PI / 2.5;
                     setAvatarVisibility(true);
                 }
                 if (viewModeRef.current) {
