@@ -73,8 +73,8 @@ export async function buildAvatar(
 
     const root = result.meshes[0] as unknown as TransformNode;
 
-    // Scale down — HVGirl is large by default
-    root.scaling.setAll(0.018);
+    // Scale down — HVGirl is large by default (canonical scale is 0.1)
+    root.scaling.setAll(0.1);
 
     // Find a head-ish mesh for camera targeting
     let headMesh: Mesh | null = null;
@@ -102,20 +102,17 @@ export async function buildAvatar(
         m.hasVertexAlpha = false;
     });
 
-    // Find animation groups by name
+    // Animation groups in HVGirl.glb:
+    //   [0] "Idle", [1] "Samba", [2] "Walking", [3] "WalkingBack"
     let idleAnim: AnimationGroup | null = null;
     let walkAnim: AnimationGroup | null = null;
     let runAnim: AnimationGroup | null = null;
 
     for (const ag of result.animationGroups) {
-        const name = ag.name.toLowerCase();
-        if (name.includes("idle") || name === "idle") {
-            idleAnim = ag;
-        } else if (name.includes("walk") || name === "walking") {
-            walkAnim = ag;
-        } else if (name.includes("run") || name === "running") {
-            runAnim = ag;
-        }
+        const name = ag.name;
+        if (name === "Idle") idleAnim = ag;
+        else if (name === "Walking") walkAnim = ag;
+        else if (name === "Samba") runAnim = ag; // use Samba as "run" variant
     }
 
     // Stop all animations first, then start with blending
