@@ -47,6 +47,8 @@ function makeMat(scene: Scene, name: string, color: Color3): StandardMaterial {
     const mat = new StandardMaterial(name, scene);
     mat.diffuseColor = color;
     mat.specularColor = new Color3(0.15, 0.15, 0.15);
+    mat.alpha = 1.0;
+    mat.transparencyMode = 0; // MATERIAL_OPAQUE
     return mat;
 }
 
@@ -502,6 +504,11 @@ export function buildAvatar(
         foot.parent = pivot;
         foot.material = shoeMat;
     }
+
+    // ── Ensure all meshes are fully opaque (prevent vertex-alpha transparency) ──
+    root.getChildMeshes().forEach((m) => {
+        m.hasVertexAlpha = false;
+    });
 
     // ── Shadows ──
     if (shadow) {
