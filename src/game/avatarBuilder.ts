@@ -301,10 +301,10 @@ export function blendWalkAnimation(rig: AvatarRig, isMoving: boolean, dt: number
 // ─── Default clothing colors (neutral — NOT address-derived) ───
 
 const DEFAULT_CLOTHING: Record<string, [number, number, number]> = {
-    "T-shirt": [0.35, 0.35, 0.40],  // neutral grey
-    "short":   [0.25, 0.25, 0.28],  // dark grey
-    "belt":    [0.30, 0.28, 0.22],  // neutral leather
-    "brown":   [0.28, 0.22, 0.16],  // neutral shoes
+    "T-shirt": [0.95, 0.95, 0.95],  // white T-shirt
+    "short":   [0.05, 0.05, 0.06],  // black pants
+    "belt":    [0.08, 0.08, 0.08],  // black belt
+    "brown":   [0.10, 0.08, 0.06],  // dark shoes
 };
 
 // ─── Main avatar builder ───
