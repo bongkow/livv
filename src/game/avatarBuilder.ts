@@ -65,48 +65,52 @@ function norm(byte: number, min: number, max: number): number {
     return min + (byte / 255) * (max - min);
 }
 
+// Interpolate smoothly between palette entries using two bytes (category + variation)
+// This gives 256 unique values per trait instead of N discrete palette entries
 const SKIN_PALETTE: [number, number, number][] = [
     [1.0, 0.87, 0.77],   // fair
     [0.96, 0.80, 0.69],  // light
-    [0.91, 0.76, 0.60],  // peach
     [0.87, 0.72, 0.53],  // medium light
     [0.78, 0.61, 0.43],  // medium
     [0.66, 0.49, 0.33],  // olive
     [0.55, 0.38, 0.26],  // tan
-    [0.48, 0.32, 0.22],  // brown
-    [0.40, 0.26, 0.18],  // dark brown
-    [0.30, 0.20, 0.14],  // dark
+    [0.44, 0.30, 0.20],  // brown
+    [0.33, 0.22, 0.15],  // dark
 ];
 
 const HAIR_PALETTE: [number, number, number][] = [
     [0.05, 0.03, 0.02],  // jet black
-    [0.12, 0.08, 0.05],  // black
-    [0.25, 0.15, 0.08],  // very dark brown
-    [0.40, 0.25, 0.12],  // dark brown
+    [0.25, 0.15, 0.08],  // dark brown
     [0.55, 0.35, 0.15],  // brown
-    [0.70, 0.45, 0.20],  // light brown
     [0.75, 0.55, 0.25],  // auburn
-    [0.85, 0.65, 0.30],  // dark blonde
     [0.92, 0.78, 0.45],  // blonde
     [0.95, 0.90, 0.70],  // platinum
     [0.80, 0.25, 0.12],  // red
-    [0.60, 0.15, 0.08],  // dark red
     [0.50, 0.50, 0.55],  // grey
-    [0.75, 0.75, 0.78],  // silver
 ];
 
 const EYE_PALETTE: [number, number, number][] = [
     [0.22, 0.13, 0.06],  // dark brown
-    [0.40, 0.25, 0.10],  // brown
     [0.55, 0.38, 0.15],  // amber
-    [0.35, 0.50, 0.25],  // hazel
     [0.20, 0.45, 0.20],  // green
-    [0.15, 0.30, 0.15],  // dark green
     [0.25, 0.45, 0.65],  // blue
     [0.15, 0.30, 0.55],  // dark blue
     [0.40, 0.35, 0.55],  // grey-blue
     [0.10, 0.08, 0.05],  // near black
 ];
+
+function lerpPalette(palette: [number, number, number][], t: number): Color3 {
+    const n = palette.length - 1;
+    const idx = t * n;
+    const lo = Math.floor(idx);
+    const hi = Math.min(lo + 1, n);
+    const frac = idx - lo;
+    return new Color3(
+        palette[lo][0] + (palette[hi][0] - palette[lo][0]) * frac,
+        palette[lo][1] + (palette[hi][1] - palette[lo][1]) * frac,
+        palette[lo][2] + (palette[hi][2] - palette[lo][2]) * frac,
+    );
+}
 
 function addressToTraits(address: string): InnateTraits {
     const b = addressToBytes(address);
@@ -119,21 +123,18 @@ function addressToTraits(address: string): InnateTraits {
         ? norm(b[1], 0.090, 0.120)
         : norm(b[1], 0.078, 0.105);
 
-    // Skin tone
-    const skinIdx = b[2] % SKIN_PALETTE.length;
-    const [sr, sg, sb] = SKIN_PALETTE[skinIdx];
-    const skinColor = new Color3(sr, sg, sb);
+    // Skin tone — use TWO bytes for 65536 unique combos, then lerp through palette
+    const skinT = ((b[2] * 256 + b[19]) % 65536) / 65535;
+    const skinColor = lerpPalette(SKIN_PALETTE, skinT);
 
-    // Hair color
-    const hairIdx = b[3] % HAIR_PALETTE.length;
-    const [hr, hg, hb] = HAIR_PALETTE[hairIdx];
-    const hairColor = new Color3(hr, hg, hb);
+    // Hair color — two bytes, lerp through palette
+    const hairT = ((b[3] * 256 + b[18]) % 65536) / 65535;
+    const hairColor = lerpPalette(HAIR_PALETTE, hairT);
 
-    // Eye color
-    const eyeIdx = b[4] % EYE_PALETTE.length;
-    const [er, eg, eb] = EYE_PALETTE[eyeIdx];
-    const eyeColor = new Color3(er, eg, eb);
-    const eyeDarkColor = new Color3(er * 0.5, eg * 0.5, eb * 0.5);
+    // Eye color — two bytes, lerp through palette
+    const eyeT = ((b[4] * 256 + b[17]) % 65536) / 65535;
+    const eyeColor = lerpPalette(EYE_PALETTE, eyeT);
+    const eyeDarkColor = new Color3(eyeColor.r * 0.5, eyeColor.g * 0.5, eyeColor.b * 0.5);
 
     // Body proportions — gender-differentiated
     const shoulderWidth = gender === "male"
