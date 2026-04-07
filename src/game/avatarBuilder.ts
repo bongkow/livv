@@ -300,11 +300,11 @@ export function blendWalkAnimation(rig: AvatarRig, isMoving: boolean, dt: number
 
 // ─── Default clothing colors (neutral — NOT address-derived) ───
 
-const DEFAULT_CLOTHING: Record<string, [number, number, number]> = {
+const DEFAULT_CLOTHING: Record<string, [number, number, number] | "skin"> = {
     "T-shirt": [0.95, 0.95, 0.95],  // white T-shirt
     "short":   [0.05, 0.05, 0.06],  // black pants
     "belt":    [0.08, 0.08, 0.08],  // black belt
-    "brown":   [0.10, 0.08, 0.06],  // dark shoes
+    "brown":   "skin",              // barefoot — match skin tone
 };
 
 // ─── Main avatar builder ───
@@ -417,15 +417,18 @@ export async function buildAvatar(
             }
         }
 
-        // Clothing — default neutral (NOT address-derived)
-        if (DEFAULT_CLOTHING[matName]) {
-            const [cr, cg, cb] = DEFAULT_CLOTHING[matName];
+        // Clothing — default (NOT address-derived). "skin" = barefoot
+        const clothingVal = DEFAULT_CLOTHING[matName];
+        if (clothingVal) {
+            const color = clothingVal === "skin"
+                ? traits.skinColor
+                : new Color3(clothingVal[0], clothingVal[1], clothingVal[2]);
             const cloned = mat.clone(matName + "_" + address.slice(2, 8));
             if (!cloned) continue;
             if (cloned instanceof PBRMaterial) {
-                cloned.albedoColor = new Color3(cr, cg, cb);
+                cloned.albedoColor = color;
             } else if (cloned instanceof StandardMaterial) {
-                cloned.diffuseColor = new Color3(cr, cg, cb);
+                cloned.diffuseColor = color;
             }
             for (const m of result.meshes) {
                 if (m.material === mat) m.material = cloned;
@@ -455,14 +458,17 @@ export async function buildAvatar(
                     subs[i] = cloned as PBRMaterial | StandardMaterial;
                 }
 
-                if (DEFAULT_CLOTHING[subName]) {
-                    const [cr, cg, cb] = DEFAULT_CLOTHING[subName];
+                const subClothVal = DEFAULT_CLOTHING[subName];
+                if (subClothVal) {
+                    const color = subClothVal === "skin"
+                        ? traits.skinColor
+                        : new Color3(subClothVal[0], subClothVal[1], subClothVal[2]);
                     const cloned = sub.clone(subName + "_" + address.slice(2, 8));
                     if (!cloned) continue;
                     if (cloned instanceof PBRMaterial) {
-                        cloned.albedoColor = new Color3(cr, cg, cb);
+                        cloned.albedoColor = color;
                     } else if (cloned instanceof StandardMaterial) {
-                        cloned.diffuseColor = new Color3(cr, cg, cb);
+                        cloned.diffuseColor = color;
                     }
                     subs[i] = cloned as PBRMaterial | StandardMaterial;
                 }
