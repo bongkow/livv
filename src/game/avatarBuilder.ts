@@ -400,17 +400,8 @@ export async function buildAvatar(
     };
 
     // Strip Babylon.js suffixes like " #1", " #2" from material names
-    // (added when the same GLB is imported multiple times)
     function baseName(name: string): string {
         return name.replace(/ #\d+$/, "");
-    }
-
-    function applyColor(mat: PBRMaterial | StandardMaterial, color: Color3) {
-        if (mat instanceof PBRMaterial) {
-            mat.albedoColor = color;
-        } else if (mat instanceof StandardMaterial) {
-            mat.diffuseColor = color;
-        }
     }
 
     function getTargetColor(name: string): Color3 | null {
@@ -425,10 +416,27 @@ export async function buildAvatar(
         return null;
     }
 
-    // HVGirl is a single mesh with MultiMaterial (one sub-material per body part).
-    // Clone each sub-material so each avatar instance has independent colors.
+    // Create a fresh PBRMaterial with the target color, copying roughness/metallic
+    function makeColoredMaterial(original: PBRMaterial | StandardMaterial, color: Color3, suffix: string): PBRMaterial {
+        const mat = new PBRMaterial(baseName(original.name) + "_" + suffix, scene);
+        mat.albedoColor = color;
+        mat.metallic = 0;
+        mat.roughness = 1;
+        // Copy metallic/roughness from original if it's PBR
+        if (original instanceof PBRMaterial) {
+            mat.metallic = original.metallic ?? 0;
+            mat.roughness = original.roughness ?? 1;
+        }
+        return mat;
+    }
+
+    const addrSuffix = address.slice(2, 8);
+
+    // Apply colors to all meshes — handles both MultiMaterial and direct material
     for (const m of result.meshes) {
         m.hasVertexAlpha = false;
+
+        // Path 1: MultiMaterial (single mesh with multiple primitives)
         const multiMat = m.material;
         if (multiMat && "subMaterials" in multiMat) {
             const subs = (multiMat as { subMaterials: (PBRMaterial | StandardMaterial | null)[] }).subMaterials;
@@ -437,22 +445,20 @@ export async function buildAvatar(
                 if (!sub) continue;
                 const color = getTargetColor(sub.name);
                 if (!color) continue;
-                const cloned = sub.clone(baseName(sub.name) + "_" + address.slice(2, 8));
-                if (!cloned) continue;
-                applyColor(cloned as PBRMaterial | StandardMaterial, color);
-                subs[i] = cloned as PBRMaterial | StandardMaterial;
+                subs[i] = makeColoredMaterial(sub, color, addrSuffix);
             }
+            continue;
         }
 
-        // Also handle direct material (non-MultiMaterial mesh)
-        if (m.material && !("subMaterials" in m.material)) {
+        // Path 2: Direct material (one material per mesh/primitive)
+        if (m.material) {
             const color = getTargetColor(m.material.name);
             if (color) {
-                const cloned = m.material.clone(baseName(m.material.name) + "_" + address.slice(2, 8));
-                if (cloned) {
-                    applyColor(cloned as PBRMaterial | StandardMaterial, color);
-                    m.material = cloned;
-                }
+                m.material = makeColoredMaterial(
+                    m.material as PBRMaterial | StandardMaterial,
+                    color,
+                    addrSuffix,
+                );
             }
         }
     }
