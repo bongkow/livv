@@ -182,37 +182,50 @@ function sculptFace(mesh: Mesh, traits: InnateTraits): void {
     const positions = mesh.getVerticesData(VertexBuffer.PositionKind, false, true);
     if (!positions) return;
 
+    // Amplified multipliers for visible differences
+    const nw = traits.noseWidth;    // 0.7–1.3
+    const mw = traits.mouthWidth;   // 0.7–1.3
+    const mc = traits.mouthCurve;   // -0.3–0.3
+    const hz = traits.headScaleZ;   // 0.93–1.07
+    const hy = traits.headScaleY;   // 0.90–1.10
+    const sw = traits.shoulderWidth;// 0.85–1.20
+
     for (let i = 0; i < positions.length; i += 3) {
         const x = positions[i], y = positions[i + 1], z = positions[i + 2];
 
-        // Forehead — push forward/back, scale height
+        // Forehead — push forward/back, scale height (3x amplified)
         if (y > 20 && z > 0) {
-            positions[i + 2] += (traits.headScaleZ - 1.0) * 1.5;  // forehead depth
-            positions[i + 1] += (traits.headScaleY - 1.0) * 0.8;  // forehead height
+            positions[i + 2] += (hz - 1.0) * 5.0;
+            positions[i + 1] += (hy - 1.0) * 3.0;
         }
 
-        // Cheeks — push outward/inward
-        if (y > 17 && y < 19 && Math.abs(x) > 1.0 && z > 0) {
+        // Cheeks — push outward/inward (3x amplified)
+        if (y > 17 && y < 19.5 && Math.abs(x) > 0.8 && z > 0) {
             const sign = x > 0 ? 1 : -1;
-            positions[i] += sign * (traits.mouthWidth - 1.0) * 0.6;    // cheek width
-            positions[i + 2] += (traits.noseWidth - 1.0) * 0.3;        // cheek depth
+            positions[i] += sign * (mw - 1.0) * 2.0;
+            positions[i + 2] += (nw - 1.0) * 1.0;
         }
 
-        // Nose — scale width and protrusion
-        if (y > 17 && y < 19 && z > 1.5 && Math.abs(x) < 0.8) {
-            positions[i] *= (0.7 + traits.noseWidth * 0.6);            // nose width
-            positions[i + 2] += (traits.noseWidth - 1.0) * 0.5;       // nose protrusion
+        // Nose — width and protrusion (3x amplified)
+        if (y > 17 && y < 19.5 && z > 1.3 && Math.abs(x) < 1.0) {
+            positions[i] *= (0.5 + nw);             // 0.5x – 1.8x nose width
+            positions[i + 2] += (nw - 1.0) * 1.5;   // nose protrusion
         }
 
-        // Jaw — widen/narrow
-        if (y > 14 && y < 16.5 && Math.abs(x) > 0.6) {
+        // Jaw — widen/narrow (3x amplified)
+        if (y > 13 && y < 17 && Math.abs(x) > 0.5) {
             const sign = x > 0 ? 1 : -1;
-            positions[i] += sign * (traits.shoulderWidth - 1.0) * 0.5; // jaw width
+            positions[i] += sign * (sw - 1.0) * 1.5;
         }
 
-        // Chin — push forward/back
-        if (y > 15 && y < 17 && z > 0.8 && Math.abs(x) < 0.8) {
-            positions[i + 2] += (traits.mouthCurve) * 1.2;            // chin protrusion
+        // Chin — push forward/back (3x amplified)
+        if (y > 14 && y < 17 && z > 0.5 && Math.abs(x) < 1.0) {
+            positions[i + 2] += mc * 4.0;
+        }
+
+        // Overall face width scaling (entire face area)
+        if (y > 16 && y < 21) {
+            positions[i] *= (0.85 + mw * 0.3);  // face width: 0.85x – 1.24x
         }
     }
 
@@ -274,11 +287,12 @@ function paintSkinColors(mesh: Mesh, traits: InnateTraits): void {
 // ─── Scale eye meshes for eye size variation ───
 
 function scaleEyes(meshes: Mesh[], traits: InnateTraits): void {
-    const eyeScale = 0.8 + traits.eyeSize * 0.4; // 0.56 – 1.32
+    const eyeScale = 0.65 + traits.eyeSize * 0.55; // 0.46 – 1.37 (more dramatic)
     for (const m of meshes) {
         const name = m.name.toLowerCase();
-        if (name.includes("primitive2") || name.includes("primitive5")) {
-            // iris, iris_dark — scale from center
+        // iris (primitive2), iris_dark (primitive5), white/eyes (primitive0), pupil (primitive1)
+        if (name.includes("primitive0") || name.includes("primitive1") ||
+            name.includes("primitive2") || name.includes("primitive5")) {
             m.scaling.x = eyeScale;
             m.scaling.y = eyeScale;
         }
@@ -435,16 +449,20 @@ export async function buildAvatar(
         return null;
     }
 
-    // Create a fresh PBRMaterial with the target color — NO textures, just solid color
+    // Create a fresh PBRMaterial — fully opaque, no textures, no transparency
     function makeColoredMaterial(original: PBRMaterial | StandardMaterial, color: Color3, suffix: string): PBRMaterial {
         const mat = new PBRMaterial(baseName(original.name) + "_" + suffix, scene);
         mat.albedoColor = color;
-        mat.albedoTexture = null;  // Force solid color — remove any baked texture
+        mat.albedoTexture = null;
         mat.metallic = 0;
-        mat.roughness = 1;
+        mat.roughness = 0.5;
+        mat.alpha = 1.0;
+        mat.transparencyMode = PBRMaterial.PBRMATERIAL_OPAQUE;
+        mat.backFaceCulling = false;  // model is double-sided
+        mat.forceDepthWrite = true;
         if (original instanceof PBRMaterial) {
             mat.metallic = original.metallic ?? 0;
-            mat.roughness = original.roughness ?? 1;
+            mat.roughness = original.roughness ?? 0.5;
         }
         return mat;
     }
@@ -462,6 +480,7 @@ export async function buildAvatar(
     // Apply colors to all meshes — handles both MultiMaterial and direct material
     for (const m of result.meshes) {
         m.hasVertexAlpha = false;
+        (m as Mesh).visibility = 1.0;
 
         // Path 1: MultiMaterial (single mesh with multiple primitives)
         const multiMat = m.material;
