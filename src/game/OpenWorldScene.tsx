@@ -65,6 +65,7 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
     const [chatText, setChatText] = useState("");
     const chatInputRef = useRef<HTMLInputElement>(null);
     const chatOpenRef = useRef(false);
+    const pendingChatRef = useRef<string | null>(null);
 
     const setup = useCallback(
         (canvas: HTMLCanvasElement) => {
@@ -125,6 +126,8 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 prevZ: number;
             }>();
             const chatBubbles = new Map<string, { mesh: Mesh; expiry: number }>();
+            let localChatBubble: Mesh | null = null;
+            let localChatBubbleExpiry = 0;
 
             // ── Rig placeholder (filled when GLB loads) ──
             let rig: AvatarRig | null = null;
@@ -436,6 +439,18 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                         chatBubbles.delete(addr);
                     }
                 }
+
+                // ── Local player chat bubble ──
+                if (pendingChatRef.current && rig) {
+                    if (localChatBubble) localChatBubble.dispose();
+                    localChatBubble = buildChatBubble(scene, rig.root, pendingChatRef.current);
+                    localChatBubbleExpiry = Date.now() + 3000;
+                    pendingChatRef.current = null;
+                }
+                if (localChatBubble && localChatBubbleExpiry <= now) {
+                    localChatBubble.dispose();
+                    localChatBubble = null;
+                }
             });
 
             // ── Render loop ──
@@ -454,6 +469,7 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 remoteAvatars.clear();
                 for (const [, bubble] of chatBubbles) bubble.mesh.dispose();
                 chatBubbles.clear();
+                if (localChatBubble) localChatBubble.dispose();
                 scene.dispose();
                 engine.dispose();
                 engineRef.current = null;
@@ -474,6 +490,9 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
         setChatOpen(false);
         chatOpenRef.current = false;
         if (!text) return;
+
+        // Show bubble on own avatar immediately
+        pendingChatRef.current = text;
 
         const wsStore = useWebSocketStore.getState();
         const localPos = useGamePresenceStore.getState().localPosition;

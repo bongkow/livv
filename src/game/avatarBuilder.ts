@@ -11,6 +11,7 @@ import {
     Scene,
     MeshBuilder,
     StandardMaterial,
+    PBRMaterial,
     TransformNode,
     DynamicTexture,
     Color3,
@@ -21,6 +22,79 @@ import {
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
 import { truncateAddress } from "@/utils/truncateAddress";
+
+// ─── Deterministic traits from Ethereum address ───
+
+interface AvatarTraits {
+    scale: number;           // overall height (0.08–0.12)
+    skinColor: Color3;       // skin tone
+    hairColor: Color3;       // hair color
+    topColor: Color3;        // upper clothing
+    bottomColor: Color3;     // lower clothing / shoes
+    headScaleY: number;      // head vertical stretch (0.9–1.1)
+}
+
+function addressToBytes(address: string): number[] {
+    const hex = address.replace("0x", "").toLowerCase();
+    const bytes: number[] = [];
+    for (let i = 0; i < hex.length && i < 40; i += 2) {
+        bytes.push(parseInt(hex.slice(i, i + 2), 16));
+    }
+    return bytes;
+}
+
+function addressToTraits(address: string): AvatarTraits {
+    const b = addressToBytes(address);
+
+    // Scale: 0.08–0.12 (short to tall)
+    const scale = 0.08 + (b[0] / 255) * 0.04;
+
+    // Skin tone: diverse range from light to dark
+    const skinIdx = b[1] % 8;
+    const skinPalette: [number, number, number][] = [
+        [1.0, 0.87, 0.77],   // fair
+        [0.96, 0.80, 0.69],  // light
+        [0.87, 0.72, 0.53],  // medium light
+        [0.78, 0.61, 0.43],  // medium
+        [0.66, 0.49, 0.33],  // olive
+        [0.55, 0.38, 0.26],  // tan
+        [0.44, 0.30, 0.20],  // brown
+        [0.33, 0.22, 0.15],  // dark
+    ];
+    const [sr, sg, sb] = skinPalette[skinIdx];
+    const skinColor = new Color3(sr, sg, sb);
+
+    // Hair color
+    const hairIdx = b[2] % 7;
+    const hairPalette: [number, number, number][] = [
+        [0.10, 0.07, 0.05],  // black
+        [0.35, 0.22, 0.12],  // dark brown
+        [0.55, 0.35, 0.15],  // brown
+        [0.75, 0.55, 0.25],  // light brown / auburn
+        [0.90, 0.75, 0.40],  // blonde
+        [0.85, 0.30, 0.15],  // red
+        [0.45, 0.45, 0.50],  // grey
+    ];
+    const [hr, hg, hb] = hairPalette[hairIdx];
+    const hairColor = new Color3(hr, hg, hb);
+
+    // Clothing: fully use address bytes for vibrant colors
+    const topColor = new Color3(
+        0.15 + (b[3] / 255) * 0.85,
+        0.15 + (b[4] / 255) * 0.85,
+        0.15 + (b[5] / 255) * 0.85,
+    );
+    const bottomColor = new Color3(
+        0.1 + (b[6] / 255) * 0.5,
+        0.1 + (b[7] / 255) * 0.5,
+        0.1 + (b[8] / 255) * 0.5,
+    );
+
+    // Head scale: slight variation (0.92–1.08)
+    const headScaleY = 0.92 + (b[9] / 255) * 0.16;
+
+    return { scale, skinColor, hairColor, topColor, bottomColor, headScaleY };
+}
 
 // ─── Avatar rig interface ───
 
@@ -64,9 +138,10 @@ export async function buildAvatar(
     );
 
     const root = result.meshes[0] as unknown as TransformNode;
+    const traits = addressToTraits(address);
 
-    // Scale down — HVGirl is large by default (canonical scale is 0.1)
-    root.scaling.setAll(0.1);
+    // Scale down — varied by address (canonical ~0.1, now 0.08–0.12)
+    root.scaling.setAll(traits.scale);
 
     // GLB models use rotationQuaternion by default — clear it so Euler .rotation.y works
     root.rotationQuaternion = null;
@@ -84,6 +159,11 @@ export async function buildAvatar(
         headMesh = result.meshes[1] as Mesh;
     }
 
+    // Apply head scale variation
+    if (headMesh) {
+        headMesh.scaling.y = traits.headScaleY;
+    }
+
     // Set up shadows
     if (shadow) {
         result.meshes.forEach((m) => {
@@ -92,9 +172,33 @@ export async function buildAvatar(
         });
     }
 
-    // Ensure meshes are opaque
+    // Ensure meshes are opaque & apply address-deterministic colors
     result.meshes.forEach((m) => {
         m.hasVertexAlpha = false;
+
+        // Clone material so each avatar instance has its own
+        if (m.material) {
+            const cloned = m.material.clone(m.material.name + "_" + address.slice(2, 8));
+            if (cloned) {
+                m.material = cloned;
+                const name = m.name.toLowerCase();
+                const isSkin = name.includes("body") || name.includes("skin") || name.includes("head") || name.includes("face") || name.includes("arm") || name.includes("hand");
+                const isHair = name.includes("hair") || name.includes("bangs") || name.includes("ponytail");
+                const isBottom = name.includes("bottom") || name.includes("pant") || name.includes("leg") || name.includes("shoe") || name.includes("foot");
+
+                let tintColor: Color3;
+                if (isSkin) tintColor = traits.skinColor;
+                else if (isHair) tintColor = traits.hairColor;
+                else if (isBottom) tintColor = traits.bottomColor;
+                else tintColor = traits.topColor; // everything else = top/clothing
+
+                if (cloned instanceof PBRMaterial) {
+                    cloned.albedoColor = tintColor;
+                } else if (cloned instanceof StandardMaterial) {
+                    cloned.diffuseColor = tintColor;
+                }
+            }
+        }
     });
 
     // Animation groups in HVGirl.glb:
@@ -126,10 +230,13 @@ export async function buildAvatar(
         runAnim.setWeightForAllAnimatables(0);
     }
 
+    // headBaseY scales with avatar size (1.7 at scale 0.1)
+    const headBaseY = 1.7 * (traits.scale / 0.1);
+
     return {
         root: root as unknown as TransformNode,
         head: (headMesh ?? result.meshes[0]) as Mesh,
-        headBaseY: 1.7,
+        headBaseY,
         idleAnim,
         walkAnim,
         runAnim,
@@ -195,8 +302,9 @@ export function buildAddressLabel(
     isSelf = false,
 ): Mesh {
     const label = truncateAddress(address);
+    const traits = addressToTraits(address);
     const plane = MeshBuilder.CreatePlane("label", { width: 2, height: 0.3 }, scene);
-    plane.position.y = 2.5;
+    plane.position.y = 2.5 * (traits.scale / 0.1);
     plane.parent = parent;
     plane.billboardMode = Mesh.BILLBOARDMODE_ALL;
 
