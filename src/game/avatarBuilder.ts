@@ -281,6 +281,7 @@ export interface AvatarRig {
     walkAnim: AnimationGroup | null;
     runAnim: AnimationGroup | null;
     walkWeight: number;
+    walkSpeed: number;
 }
 
 // ─── Animation blending helper ───
@@ -510,6 +511,11 @@ export async function buildAvatar(
 
     const headBaseY = 1.7 * (traits.scale / 0.1);
 
+    // Froude-number-based walking speed: v ∝ √(height), +5% for male
+    const heightFactor = traits.scale / 0.10;
+    const genderFactor = traits.gender === "male" ? 1.025 : 0.975;
+    const walkSpeed = 0.08 * Math.sqrt(heightFactor) * genderFactor;
+
     return {
         root: root as unknown as TransformNode,
         head: (headMesh ?? result.meshes[0]) as Mesh,
@@ -518,6 +524,7 @@ export async function buildAvatar(
         walkAnim,
         runAnim,
         walkWeight: 0,
+        walkSpeed,
     };
 }
 

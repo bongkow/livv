@@ -112,7 +112,6 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
 
             // ── Movement state ──
             const keys: Record<string, boolean> = {};
-            const SPEED = 0.08;
             const BROADCAST_INTERVAL = 0.1;
             let positionBroadcastTimer = 0;
             let isFirstPerson = true;
@@ -280,7 +279,7 @@ export default function OpenWorldScene({ walletAddress }: OpenWorldSceneProps) {
                 const isMoving = move.length() > 0.001;
 
                 if (isMoving) {
-                    move.normalize().scaleInPlace(SPEED);
+                    move.normalize().scaleInPlace(rig.walkSpeed);
 
                     // Build dynamic collider list
                     const allColliders = [...colliders];
