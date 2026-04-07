@@ -19,6 +19,8 @@ import {
     ShadowGenerator,
     SceneLoader,
     AnimationGroup,
+    VertexBuffer,
+    VertexData,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
 import { truncateAddress } from "@/utils/truncateAddress";
@@ -168,87 +170,119 @@ function addressToTraits(address: string): InnateTraits {
     };
 }
 
-// ─── Face overlay: procedural eyebrows / features ───
+// ─── Face sculpting: direct vertex modification ───
+// Vertex regions in model space (from GLB analysis):
+//   Forehead: y>20, z>0 (28 verts)    Cheeks: y 17-19, |x|>1.0 (44 verts)
+//   Nose: y 17-19, z>1.5, |x|<0.5     Jaw: y 14-16, |x|>0.8 (24 verts)
 
-function buildFaceOverlay(
-    scene: Scene,
-    parent: TransformNode,
-    traits: InnateTraits,
-): Mesh {
-    const size = 4.0; // model-space units (unscaled model is ~20 units tall)
-    const plane = MeshBuilder.CreatePlane("faceOverlay", { width: size, height: size }, scene);
-    // Face is at +Z direction, eyes at y≈19.5, head bone origin ~y=17
-    // So offset: y≈2 above head bone, z≈2.1 in front (just past face surface)
-    plane.position.y = 2.0;
-    plane.position.z = 2.1;
-    plane.rotation.y = Math.PI; // face the +Z direction (toward camera)
-    plane.parent = parent;
+function sculptFace(mesh: Mesh, traits: InnateTraits): void {
+    mesh.markVerticesDataAsUpdatable(VertexBuffer.PositionKind, true);
+    mesh.markVerticesDataAsUpdatable(VertexBuffer.NormalKind, true);
 
-    const res = 512;
-    const tex = new DynamicTexture("faceTex", { width: res, height: res }, scene, true);
-    tex.hasAlpha = true;
-    const ctx = tex.getContext() as unknown as CanvasRenderingContext2D;
-    ctx.clearRect(0, 0, res, res);
+    const positions = mesh.getVerticesData(VertexBuffer.PositionKind, false, true);
+    if (!positions) return;
 
-    const cx = res / 2;
-    const cy = res / 2;
+    for (let i = 0; i < positions.length; i += 3) {
+        const x = positions[i], y = positions[i + 1], z = positions[i + 2];
 
-    // ── Freckles / moles (address-deterministic scattered dots) ──
-    const freckleCount = 3 + (traits.eyebrowStyle * 4); // 3–23 marks
-    const freckleColor = `rgba(${traits.skinColor.r * 120 | 0}, ${traits.skinColor.g * 80 | 0}, ${traits.skinColor.b * 50 | 0}, 0.7)`;
-    ctx.fillStyle = freckleColor;
-    // Use trait values as deterministic seed for positions
-    const seeds = [
-        traits.eyebrowThickness, traits.eyeSize, traits.noseWidth,
-        traits.mouthWidth, traits.mouthCurve, traits.headScaleX,
-        traits.headScaleY, traits.headScaleZ, traits.shoulderWidth,
-    ];
-    for (let i = 0; i < freckleCount; i++) {
-        const seed = seeds[i % seeds.length] * (i + 1) * 1000;
-        const fx = cx + ((seed * 7.3) % 160) - 80;
-        const fy = cy + ((seed * 3.7) % 120) - 60;
-        const fr = 2 + (seed % 5);
-        ctx.beginPath();
-        ctx.arc(fx, fy, fr, 0, Math.PI * 2);
-        ctx.fill();
-    }
+        // Forehead — push forward/back, scale height
+        if (y > 20 && z > 0) {
+            positions[i + 2] += (traits.headScaleZ - 1.0) * 1.5;  // forehead depth
+            positions[i + 1] += (traits.headScaleY - 1.0) * 0.8;  // forehead height
+        }
 
-    // ── Blush (cheek coloring — varies per address) ──
-    const blushIntensity = traits.mouthCurve > 0 ? 0.15 : 0.05;
-    ctx.fillStyle = `rgba(220, 120, 120, ${blushIntensity})`;
-    const blushSpread = 80 + traits.mouthWidth * 30;
-    ctx.beginPath();
-    ctx.ellipse(cx - blushSpread, cy + 15, 35, 25, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(cx + blushSpread, cy + 15, 35, 25, 0, 0, Math.PI * 2);
-    ctx.fill();
+        // Cheeks — push outward/inward
+        if (y > 17 && y < 19 && Math.abs(x) > 1.0 && z > 0) {
+            const sign = x > 0 ? 1 : -1;
+            positions[i] += sign * (traits.mouthWidth - 1.0) * 0.6;    // cheek width
+            positions[i + 2] += (traits.noseWidth - 1.0) * 0.3;        // cheek depth
+        }
 
-    // ── Wrinkle lines (forehead, varies by address) ──
-    if (traits.headScaleY > 1.0) {
-        const wrinkleCount = Math.floor((traits.headScaleY - 0.9) * 15);
-        ctx.strokeStyle = `rgba(${traits.skinColor.r * 100 | 0}, ${traits.skinColor.g * 70 | 0}, ${traits.skinColor.b * 50 | 0}, 0.25)`;
-        ctx.lineWidth = 1.5;
-        for (let i = 0; i < wrinkleCount; i++) {
-            const wy = cy - 100 - i * 12;
-            ctx.beginPath();
-            ctx.moveTo(cx - 50 + i * 5, wy);
-            ctx.quadraticCurveTo(cx, wy - 3 + i * 2, cx + 50 - i * 5, wy);
-            ctx.stroke();
+        // Nose — scale width and protrusion
+        if (y > 17 && y < 19 && z > 1.5 && Math.abs(x) < 0.8) {
+            positions[i] *= (0.7 + traits.noseWidth * 0.6);            // nose width
+            positions[i + 2] += (traits.noseWidth - 1.0) * 0.5;       // nose protrusion
+        }
+
+        // Jaw — widen/narrow
+        if (y > 14 && y < 16.5 && Math.abs(x) > 0.6) {
+            const sign = x > 0 ? 1 : -1;
+            positions[i] += sign * (traits.shoulderWidth - 1.0) * 0.5; // jaw width
+        }
+
+        // Chin — push forward/back
+        if (y > 15 && y < 17 && z > 0.8 && Math.abs(x) < 0.8) {
+            positions[i + 2] += (traits.mouthCurve) * 1.2;            // chin protrusion
         }
     }
 
-    tex.update();
+    mesh.updateVerticesData(VertexBuffer.PositionKind, positions);
 
-    const mat = new StandardMaterial("faceOverlayMat", scene);
-    mat.diffuseTexture = tex;
-    mat.useAlphaFromDiffuseTexture = true;
-    mat.emissiveColor = Color3.White();
-    mat.disableLighting = true;
-    mat.backFaceCulling = false;
-    plane.material = mat;
+    // Recompute normals for correct lighting
+    const normals = mesh.getVerticesData(VertexBuffer.NormalKind, false, true);
+    const indices = mesh.getIndices();
+    if (normals && indices) {
+        VertexData.ComputeNormals(positions, indices, normals);
+        mesh.updateVerticesData(VertexBuffer.NormalKind, normals);
+    }
+}
 
-    return plane;
+// ─── Vertex colors: blush, freckles on skin ───
+
+function paintSkinColors(mesh: Mesh, traits: InnateTraits): void {
+    const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
+    if (!positions) return;
+
+    const vertCount = positions.length / 3;
+    const colors = new Float32Array(vertCount * 4);
+
+    // Deterministic seed from traits
+    const seed1 = traits.eyebrowThickness * 10000;
+    const seed2 = traits.eyeSize * 10000;
+
+    for (let i = 0; i < vertCount; i++) {
+        const x = positions[i * 3], y = positions[i * 3 + 1], z = positions[i * 3 + 2];
+        let r = 1.0, g = 1.0, b = 1.0;
+
+        // Cheek blush (y 17-19, |x| > 0.8, z > 0.5)
+        if (y > 17 && y < 19 && Math.abs(x) > 0.8 && z > 0.5) {
+            const blush = 0.05 + Math.abs(traits.mouthCurve) * 0.25;
+            g -= blush;
+            b -= blush * 1.3;
+        }
+
+        // Freckles — deterministic dots based on vertex position
+        const freckleHash = Math.sin(x * seed1 + y * seed2 + z * 137.7) * 43758.5453;
+        const freckleVal = freckleHash - Math.floor(freckleHash);
+        if (freckleVal < traits.eyebrowThickness * 0.08 && y > 16 && z > 0.5) {
+            // Darken this vertex slightly — freckle
+            r -= 0.12;
+            g -= 0.15;
+            b -= 0.18;
+        }
+
+        colors[i * 4 + 0] = r;
+        colors[i * 4 + 1] = g;
+        colors[i * 4 + 2] = b;
+        colors[i * 4 + 3] = 1.0;
+    }
+
+    mesh.setVerticesData(VertexBuffer.ColorKind, colors, true);
+    mesh.hasVertexAlpha = false;
+}
+
+// ─── Scale eye meshes for eye size variation ───
+
+function scaleEyes(meshes: Mesh[], traits: InnateTraits): void {
+    const eyeScale = 0.8 + traits.eyeSize * 0.4; // 0.56 – 1.32
+    for (const m of meshes) {
+        const name = m.name.toLowerCase();
+        if (name.includes("primitive2") || name.includes("primitive5")) {
+            // iris, iris_dark — scale from center
+            m.scaling.x = eyeScale;
+            m.scaling.y = eyeScale;
+        }
+    }
 }
 
 // ─── Avatar rig interface ───
@@ -466,10 +500,18 @@ export async function buildAvatar(
     console.log(`[Avatar ${addrSuffix}] bone scaling applied:`,
         allNodes.filter((n) => boneNames[n.name]).map((n) => n.name).join(", ") || "NONE FOUND");
 
-    // ── Face overlay (eyebrows, nose hint, mouth) ──
-    if (headBone) {
-        buildFaceOverlay(scene, headBone, traits);
+    // ── Face sculpting: modify vertex positions for unique face shapes ──
+    // ── Vertex colors: add blush, freckles to skin ──
+    // ── Eye scaling: vary eye size ──
+    for (const m of result.meshes) {
+        const mName = m.name.toLowerCase();
+        // Skin primitive — sculpt face + paint vertex colors
+        if (mName.includes("primitive6")) {
+            sculptFace(m as Mesh, traits);
+            paintSkinColors(m as Mesh, traits);
+        }
     }
+    scaleEyes(result.meshes as Mesh[], traits);
 
     // ── Animations ──
     let idleAnim: AnimationGroup | null = null;
