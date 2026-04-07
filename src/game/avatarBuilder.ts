@@ -416,13 +416,13 @@ export async function buildAvatar(
         return null;
     }
 
-    // Create a fresh PBRMaterial with the target color, copying roughness/metallic
+    // Create a fresh PBRMaterial with the target color — NO textures, just solid color
     function makeColoredMaterial(original: PBRMaterial | StandardMaterial, color: Color3, suffix: string): PBRMaterial {
         const mat = new PBRMaterial(baseName(original.name) + "_" + suffix, scene);
         mat.albedoColor = color;
+        mat.albedoTexture = null;  // Force solid color — remove any baked texture
         mat.metallic = 0;
         mat.roughness = 1;
-        // Copy metallic/roughness from original if it's PBR
         if (original instanceof PBRMaterial) {
             mat.metallic = original.metallic ?? 0;
             mat.roughness = original.roughness ?? 1;
@@ -432,6 +432,14 @@ export async function buildAvatar(
 
     const addrSuffix = address.slice(2, 8);
 
+    // Diagnostic: log all mesh/material info for debugging
+    console.log(`[Avatar ${address.slice(0, 10)}] traits:`, {
+        gender: traits.gender,
+        scale: traits.scale.toFixed(4),
+        skin: `rgb(${(traits.skinColor.r * 255)|0},${(traits.skinColor.g * 255)|0},${(traits.skinColor.b * 255)|0})`,
+        hair: `rgb(${(traits.hairColor.r * 255)|0},${(traits.hairColor.g * 255)|0},${(traits.hairColor.b * 255)|0})`,
+    });
+
     // Apply colors to all meshes — handles both MultiMaterial and direct material
     for (const m of result.meshes) {
         m.hasVertexAlpha = false;
@@ -440,11 +448,14 @@ export async function buildAvatar(
         const multiMat = m.material;
         if (multiMat && "subMaterials" in multiMat) {
             const subs = (multiMat as { subMaterials: (PBRMaterial | StandardMaterial | null)[] }).subMaterials;
+            console.log(`[Avatar ${addrSuffix}] MultiMaterial found with ${subs.length} subs:`,
+                subs.map((s) => s?.name).join(", "));
             for (let i = 0; i < subs.length; i++) {
                 const sub = subs[i];
                 if (!sub) continue;
                 const color = getTargetColor(sub.name);
                 if (!color) continue;
+                console.log(`[Avatar ${addrSuffix}] coloring sub "${sub.name}" → rgb(${(color.r*255)|0},${(color.g*255)|0},${(color.b*255)|0})`);
                 subs[i] = makeColoredMaterial(sub, color, addrSuffix);
             }
             continue;
@@ -454,14 +465,21 @@ export async function buildAvatar(
         if (m.material) {
             const color = getTargetColor(m.material.name);
             if (color) {
+                console.log(`[Avatar ${addrSuffix}] coloring mesh "${m.name}" mat "${m.material.name}" → rgb(${(color.r*255)|0},${(color.g*255)|0},${(color.b*255)|0})`);
                 m.material = makeColoredMaterial(
                     m.material as PBRMaterial | StandardMaterial,
                     color,
                     addrSuffix,
                 );
+            } else {
+                console.log(`[Avatar ${addrSuffix}] SKIPPED mesh "${m.name}" mat "${m.material.name}" (no color mapping)`);
             }
         }
     }
+
+    // Log bone scaling results
+    console.log(`[Avatar ${addrSuffix}] bone scaling applied:`,
+        allNodes.filter((n) => boneNames[n.name]).map((n) => n.name).join(", ") || "NONE FOUND");
 
     // ── Face overlay (eyebrows, nose hint, mouth) ──
     if (headBone) {
