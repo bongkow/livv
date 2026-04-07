@@ -392,7 +392,6 @@ export async function buildAvatar(
     }
 
     // ── Apply innate material colors ──
-    // Material name → color mapping (innate traits only)
     const innateColors: Record<string, Color3> = {
         "skin": traits.skinColor,
         "hair": traits.hairColor,
@@ -400,44 +399,34 @@ export async function buildAvatar(
         "iris dark": traits.eyeDarkColor,
     };
 
-    for (const mat of scene.materials) {
-        const matName = mat.name;
+    // Strip Babylon.js suffixes like " #1", " #2" from material names
+    // (added when the same GLB is imported multiple times)
+    function baseName(name: string): string {
+        return name.replace(/ #\d+$/, "");
+    }
 
-        // Innate traits — skin, hair, eyes
-        if (innateColors[matName]) {
-            const cloned = mat.clone(matName + "_" + address.slice(2, 8));
-            if (!cloned) continue;
-            if (cloned instanceof PBRMaterial) {
-                cloned.albedoColor = innateColors[matName];
-            } else if (cloned instanceof StandardMaterial) {
-                cloned.diffuseColor = innateColors[matName];
-            }
-            // Apply cloned material to all meshes using the original
-            for (const m of result.meshes) {
-                if (m.material === mat) m.material = cloned;
-            }
-        }
-
-        // Clothing — default (NOT address-derived). "skin" = barefoot
-        const clothingVal = DEFAULT_CLOTHING[matName];
-        if (clothingVal) {
-            const color = clothingVal === "skin"
-                ? traits.skinColor
-                : new Color3(clothingVal[0], clothingVal[1], clothingVal[2]);
-            const cloned = mat.clone(matName + "_" + address.slice(2, 8));
-            if (!cloned) continue;
-            if (cloned instanceof PBRMaterial) {
-                cloned.albedoColor = color;
-            } else if (cloned instanceof StandardMaterial) {
-                cloned.diffuseColor = color;
-            }
-            for (const m of result.meshes) {
-                if (m.material === mat) m.material = cloned;
-            }
+    function applyColor(mat: PBRMaterial | StandardMaterial, color: Color3) {
+        if (mat instanceof PBRMaterial) {
+            mat.albedoColor = color;
+        } else if (mat instanceof StandardMaterial) {
+            mat.diffuseColor = color;
         }
     }
 
-    // Also handle MultiMaterial sub-materials
+    function getTargetColor(name: string): Color3 | null {
+        const base = baseName(name);
+        if (innateColors[base]) return innateColors[base];
+        const clothVal = DEFAULT_CLOTHING[base];
+        if (clothVal) {
+            return clothVal === "skin"
+                ? traits.skinColor
+                : new Color3(clothVal[0], clothVal[1], clothVal[2]);
+        }
+        return null;
+    }
+
+    // HVGirl is a single mesh with MultiMaterial (one sub-material per body part).
+    // Clone each sub-material so each avatar instance has independent colors.
     for (const m of result.meshes) {
         m.hasVertexAlpha = false;
         const multiMat = m.material;
@@ -446,32 +435,23 @@ export async function buildAvatar(
             for (let i = 0; i < subs.length; i++) {
                 const sub = subs[i];
                 if (!sub) continue;
-                const subName = sub.name;
+                const color = getTargetColor(sub.name);
+                if (!color) continue;
+                const cloned = sub.clone(baseName(sub.name) + "_" + address.slice(2, 8));
+                if (!cloned) continue;
+                applyColor(cloned as PBRMaterial | StandardMaterial, color);
+                subs[i] = cloned as PBRMaterial | StandardMaterial;
+            }
+        }
 
-                if (innateColors[subName]) {
-                    const cloned = sub.clone(subName + "_" + address.slice(2, 8));
-                    if (!cloned) continue;
-                    if (cloned instanceof PBRMaterial) {
-                        cloned.albedoColor = innateColors[subName];
-                    } else if (cloned instanceof StandardMaterial) {
-                        cloned.diffuseColor = innateColors[subName];
-                    }
-                    subs[i] = cloned as PBRMaterial | StandardMaterial;
-                }
-
-                const subClothVal = DEFAULT_CLOTHING[subName];
-                if (subClothVal) {
-                    const color = subClothVal === "skin"
-                        ? traits.skinColor
-                        : new Color3(subClothVal[0], subClothVal[1], subClothVal[2]);
-                    const cloned = sub.clone(subName + "_" + address.slice(2, 8));
-                    if (!cloned) continue;
-                    if (cloned instanceof PBRMaterial) {
-                        cloned.albedoColor = color;
-                    } else if (cloned instanceof StandardMaterial) {
-                        cloned.diffuseColor = color;
-                    }
-                    subs[i] = cloned as PBRMaterial | StandardMaterial;
+        // Also handle direct material (non-MultiMaterial mesh)
+        if (m.material && !("subMaterials" in m.material)) {
+            const color = getTargetColor(m.material.name);
+            if (color) {
+                const cloned = m.material.clone(baseName(m.material.name) + "_" + address.slice(2, 8));
+                if (cloned) {
+                    applyColor(cloned as PBRMaterial | StandardMaterial, color);
+                    m.material = cloned;
                 }
             }
         }
