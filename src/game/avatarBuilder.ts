@@ -175,89 +175,68 @@ function buildFaceOverlay(
     parent: TransformNode,
     traits: InnateTraits,
 ): Mesh {
-    const size = 0.6;
+    const size = 4.0; // model-space units (unscaled model is ~20 units tall)
     const plane = MeshBuilder.CreatePlane("faceOverlay", { width: size, height: size }, scene);
-    // Position in front of face — head bone local coords
-    plane.position.y = 0.5;
-    plane.position.z = -0.55;
+    // Face is at +Z direction, eyes at y≈19.5, head bone origin ~y=17
+    // So offset: y≈2 above head bone, z≈2.1 in front (just past face surface)
+    plane.position.y = 2.0;
+    plane.position.z = 2.1;
+    plane.rotation.y = Math.PI; // face the +Z direction (toward camera)
     plane.parent = parent;
 
-    const res = 256;
+    const res = 512;
     const tex = new DynamicTexture("faceTex", { width: res, height: res }, scene, true);
     tex.hasAlpha = true;
     const ctx = tex.getContext() as unknown as CanvasRenderingContext2D;
     ctx.clearRect(0, 0, res, res);
 
-    const cx = res / 2; // center x
-    const cy = res / 2; // center y
+    const cx = res / 2;
+    const cy = res / 2;
 
-    // ── Eyebrows ──
-    const browY = cy - 50 * traits.eyeSize;
-    const browSpread = 28;
-    const browLen = 35 * traits.eyebrowThickness;
-    const browThick = 3 + 4 * traits.eyebrowThickness;
-
-    ctx.strokeStyle = `rgb(${traits.hairColor.r * 200}, ${traits.hairColor.g * 180}, ${traits.hairColor.b * 160})`;
-    ctx.lineWidth = browThick;
-    ctx.lineCap = "round";
-
-    // Different eyebrow styles
-    const style = traits.eyebrowStyle;
-    for (const side of [-1, 1]) {
-        const bx = cx + side * browSpread;
+    // ── Freckles / moles (address-deterministic scattered dots) ──
+    const freckleCount = 3 + (traits.eyebrowStyle * 4); // 3–23 marks
+    const freckleColor = `rgba(${traits.skinColor.r * 120 | 0}, ${traits.skinColor.g * 80 | 0}, ${traits.skinColor.b * 50 | 0}, 0.7)`;
+    ctx.fillStyle = freckleColor;
+    // Use trait values as deterministic seed for positions
+    const seeds = [
+        traits.eyebrowThickness, traits.eyeSize, traits.noseWidth,
+        traits.mouthWidth, traits.mouthCurve, traits.headScaleX,
+        traits.headScaleY, traits.headScaleZ, traits.shoulderWidth,
+    ];
+    for (let i = 0; i < freckleCount; i++) {
+        const seed = seeds[i % seeds.length] * (i + 1) * 1000;
+        const fx = cx + ((seed * 7.3) % 160) - 80;
+        const fy = cy + ((seed * 3.7) % 120) - 60;
+        const fr = 2 + (seed % 5);
         ctx.beginPath();
-        if (style === 0) {
-            // Straight
-            ctx.moveTo(bx - side * browLen, browY);
-            ctx.lineTo(bx + side * browLen * 0.3, browY - 2);
-        } else if (style === 1) {
-            // Arched
-            ctx.moveTo(bx - side * browLen, browY + 4);
-            ctx.quadraticCurveTo(bx, browY - 12, bx + side * browLen * 0.3, browY);
-        } else if (style === 2) {
-            // Angled
-            ctx.moveTo(bx - side * browLen, browY + 6);
-            ctx.lineTo(bx, browY - 6);
-            ctx.lineTo(bx + side * browLen * 0.3, browY - 3);
-        } else if (style === 3) {
-            // Rounded
-            ctx.moveTo(bx - side * browLen, browY + 2);
-            ctx.quadraticCurveTo(bx, browY - 8, bx + side * browLen * 0.4, browY + 2);
-        } else if (style === 4) {
-            // Thick straight
-            ctx.lineWidth = browThick * 1.5;
-            ctx.moveTo(bx - side * browLen, browY);
-            ctx.lineTo(bx + side * browLen * 0.4, browY + 1);
-        } else {
-            // S-curve
-            ctx.moveTo(bx - side * browLen, browY + 3);
-            ctx.bezierCurveTo(
-                bx - side * browLen * 0.3, browY - 10,
-                bx + side * browLen * 0.1, browY - 5,
-                bx + side * browLen * 0.4, browY + 1,
-            );
-        }
-        ctx.stroke();
+        ctx.arc(fx, fy, fr, 0, Math.PI * 2);
+        ctx.fill();
     }
 
-    // ── Nose hint ──
-    const noseW = 6 * traits.noseWidth;
-    ctx.strokeStyle = `rgba(${traits.skinColor.r * 150}, ${traits.skinColor.g * 120}, ${traits.skinColor.b * 100}, 0.5)`;
-    ctx.lineWidth = 1.5;
+    // ── Blush (cheek coloring — varies per address) ──
+    const blushIntensity = traits.mouthCurve > 0 ? 0.15 : 0.05;
+    ctx.fillStyle = `rgba(220, 120, 120, ${blushIntensity})`;
+    const blushSpread = 80 + traits.mouthWidth * 30;
     ctx.beginPath();
-    ctx.moveTo(cx - noseW, cy + 8);
-    ctx.quadraticCurveTo(cx, cy + 14, cx + noseW, cy + 8);
-    ctx.stroke();
+    ctx.ellipse(cx - blushSpread, cy + 15, 35, 25, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cx + blushSpread, cy + 15, 35, 25, 0, 0, Math.PI * 2);
+    ctx.fill();
 
-    // ── Mouth ──
-    const mw = 18 * traits.mouthWidth;
-    const mouthY = cy + 30;
-    ctx.strokeStyle = `rgba(180, 80, 80, 0.6)`;
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.moveTo(cx - mw, mouthY);
-    ctx.quadraticCurveTo(cx, mouthY + 12 * traits.mouthCurve, cx + mw, mouthY);
-    ctx.stroke();
+    // ── Wrinkle lines (forehead, varies by address) ──
+    if (traits.headScaleY > 1.0) {
+        const wrinkleCount = Math.floor((traits.headScaleY - 0.9) * 15);
+        ctx.strokeStyle = `rgba(${traits.skinColor.r * 100 | 0}, ${traits.skinColor.g * 70 | 0}, ${traits.skinColor.b * 50 | 0}, 0.25)`;
+        ctx.lineWidth = 1.5;
+        for (let i = 0; i < wrinkleCount; i++) {
+            const wy = cy - 100 - i * 12;
+            ctx.beginPath();
+            ctx.moveTo(cx - 50 + i * 5, wy);
+            ctx.quadraticCurveTo(cx, wy - 3 + i * 2, cx + 50 - i * 5, wy);
+            ctx.stroke();
+        }
+    }
 
     tex.update();
 
@@ -398,6 +377,11 @@ export async function buildAvatar(
         "hair": traits.hairColor,
         "iris": traits.eyeColor,
         "iris dark": traits.eyeDarkColor,
+        "black": new Color3(                    // eyebrows/lashes — tinted from hair
+            traits.hairColor.r * 0.4,
+            traits.hairColor.g * 0.4,
+            traits.hairColor.b * 0.4,
+        ),
     };
 
     // Strip Babylon.js suffixes like " #1", " #2" from material names
