@@ -1,10 +1,10 @@
 /*
  * @Module: AvatarBuilder
- * @Purpose: Load pre-built HVGirl.glb character from Babylon.js asset library
- * @Logic: Loads the animated character model, sets up Idle/Walk/Run animation groups,
- *         and provides blending functions for smooth transitions.
+ * @Purpose: Load HVGirl.glb and apply address-deterministic innate traits
+ * @Logic: Ethereum address bytes → gender, height, skin tone, hair color, eye color,
+ *         body proportions (bone scaling), head shape, face overlay (eyebrows).
+ *         Clothing colors are NOT address-derived (changeable later).
  * @Interfaces: buildAvatar(scene, address, shadow?) → Promise<AvatarRig>
- * @Constraints: Requires @babylonjs/core, @babylonjs/loaders
  */
 
 import {
@@ -23,15 +23,32 @@ import {
 import "@babylonjs/loaders/glTF";
 import { truncateAddress } from "@/utils/truncateAddress";
 
-// ─── Deterministic traits from Ethereum address ───
+// ─── Deterministic trait derivation from Ethereum address ───
 
-interface AvatarTraits {
-    scale: number;           // overall height (0.08–0.12)
-    skinColor: Color3;       // skin tone
-    hairColor: Color3;       // hair color
-    topColor: Color3;        // upper clothing
-    bottomColor: Color3;     // lower clothing / shoes
-    headScaleY: number;      // head vertical stretch (0.9–1.1)
+interface InnateTraits {
+    gender: "male" | "female";
+    scale: number;              // 0.08–0.12
+    skinColor: Color3;
+    hairColor: Color3;
+    eyeColor: Color3;
+    eyeDarkColor: Color3;
+    // Body proportions (bone scaling)
+    shoulderWidth: number;      // 0.85–1.20
+    hipWidth: number;           // 0.85–1.20
+    upperArmLength: number;     // 0.90–1.10
+    upperLegLength: number;     // 0.92–1.08
+    spineLength: number;        // 0.95–1.05
+    // Head shape
+    headScaleX: number;         // 0.90–1.10
+    headScaleY: number;         // 0.90–1.10
+    headScaleZ: number;         // 0.92–1.08
+    // Face overlay
+    eyebrowStyle: number;       // 0–5
+    eyebrowThickness: number;   // 0.6–1.4
+    eyeSize: number;            // 0.7–1.3
+    noseWidth: number;          // 0.7–1.3
+    mouthWidth: number;         // 0.7–1.3
+    mouthCurve: number;         // -0.3–0.3 (down to up)
 }
 
 function addressToBytes(address: string): number[] {
@@ -43,57 +60,215 @@ function addressToBytes(address: string): number[] {
     return bytes;
 }
 
-function addressToTraits(address: string): AvatarTraits {
+// Normalize byte (0–255) to a range [min, max]
+function norm(byte: number, min: number, max: number): number {
+    return min + (byte / 255) * (max - min);
+}
+
+const SKIN_PALETTE: [number, number, number][] = [
+    [1.0, 0.87, 0.77],   // fair
+    [0.96, 0.80, 0.69],  // light
+    [0.91, 0.76, 0.60],  // peach
+    [0.87, 0.72, 0.53],  // medium light
+    [0.78, 0.61, 0.43],  // medium
+    [0.66, 0.49, 0.33],  // olive
+    [0.55, 0.38, 0.26],  // tan
+    [0.48, 0.32, 0.22],  // brown
+    [0.40, 0.26, 0.18],  // dark brown
+    [0.30, 0.20, 0.14],  // dark
+];
+
+const HAIR_PALETTE: [number, number, number][] = [
+    [0.05, 0.03, 0.02],  // jet black
+    [0.12, 0.08, 0.05],  // black
+    [0.25, 0.15, 0.08],  // very dark brown
+    [0.40, 0.25, 0.12],  // dark brown
+    [0.55, 0.35, 0.15],  // brown
+    [0.70, 0.45, 0.20],  // light brown
+    [0.75, 0.55, 0.25],  // auburn
+    [0.85, 0.65, 0.30],  // dark blonde
+    [0.92, 0.78, 0.45],  // blonde
+    [0.95, 0.90, 0.70],  // platinum
+    [0.80, 0.25, 0.12],  // red
+    [0.60, 0.15, 0.08],  // dark red
+    [0.50, 0.50, 0.55],  // grey
+    [0.75, 0.75, 0.78],  // silver
+];
+
+const EYE_PALETTE: [number, number, number][] = [
+    [0.22, 0.13, 0.06],  // dark brown
+    [0.40, 0.25, 0.10],  // brown
+    [0.55, 0.38, 0.15],  // amber
+    [0.35, 0.50, 0.25],  // hazel
+    [0.20, 0.45, 0.20],  // green
+    [0.15, 0.30, 0.15],  // dark green
+    [0.25, 0.45, 0.65],  // blue
+    [0.15, 0.30, 0.55],  // dark blue
+    [0.40, 0.35, 0.55],  // grey-blue
+    [0.10, 0.08, 0.05],  // near black
+];
+
+function addressToTraits(address: string): InnateTraits {
     const b = addressToBytes(address);
 
-    // Scale: 0.08–0.12 (short to tall)
-    const scale = 0.08 + (b[0] / 255) * 0.04;
+    // Gender: bit 0 of first byte
+    const gender = b[0] & 1 ? "male" : "female";
 
-    // Skin tone: diverse range from light to dark
-    const skinIdx = b[1] % 8;
-    const skinPalette: [number, number, number][] = [
-        [1.0, 0.87, 0.77],   // fair
-        [0.96, 0.80, 0.69],  // light
-        [0.87, 0.72, 0.53],  // medium light
-        [0.78, 0.61, 0.43],  // medium
-        [0.66, 0.49, 0.33],  // olive
-        [0.55, 0.38, 0.26],  // tan
-        [0.44, 0.30, 0.20],  // brown
-        [0.33, 0.22, 0.15],  // dark
-    ];
-    const [sr, sg, sb] = skinPalette[skinIdx];
+    // Height: males tend taller, females shorter (overlapping ranges)
+    const baseScale = gender === "male"
+        ? norm(b[1], 0.090, 0.120)
+        : norm(b[1], 0.078, 0.105);
+
+    // Skin tone
+    const skinIdx = b[2] % SKIN_PALETTE.length;
+    const [sr, sg, sb] = SKIN_PALETTE[skinIdx];
     const skinColor = new Color3(sr, sg, sb);
 
     // Hair color
-    const hairIdx = b[2] % 7;
-    const hairPalette: [number, number, number][] = [
-        [0.10, 0.07, 0.05],  // black
-        [0.35, 0.22, 0.12],  // dark brown
-        [0.55, 0.35, 0.15],  // brown
-        [0.75, 0.55, 0.25],  // light brown / auburn
-        [0.90, 0.75, 0.40],  // blonde
-        [0.85, 0.30, 0.15],  // red
-        [0.45, 0.45, 0.50],  // grey
-    ];
-    const [hr, hg, hb] = hairPalette[hairIdx];
+    const hairIdx = b[3] % HAIR_PALETTE.length;
+    const [hr, hg, hb] = HAIR_PALETTE[hairIdx];
     const hairColor = new Color3(hr, hg, hb);
 
-    // Clothing: fully use address bytes for vibrant colors
-    const topColor = new Color3(
-        0.15 + (b[3] / 255) * 0.85,
-        0.15 + (b[4] / 255) * 0.85,
-        0.15 + (b[5] / 255) * 0.85,
-    );
-    const bottomColor = new Color3(
-        0.1 + (b[6] / 255) * 0.5,
-        0.1 + (b[7] / 255) * 0.5,
-        0.1 + (b[8] / 255) * 0.5,
-    );
+    // Eye color
+    const eyeIdx = b[4] % EYE_PALETTE.length;
+    const [er, eg, eb] = EYE_PALETTE[eyeIdx];
+    const eyeColor = new Color3(er, eg, eb);
+    const eyeDarkColor = new Color3(er * 0.5, eg * 0.5, eb * 0.5);
 
-    // Head scale: slight variation (0.92–1.08)
-    const headScaleY = 0.92 + (b[9] / 255) * 0.16;
+    // Body proportions — gender-differentiated
+    const shoulderWidth = gender === "male"
+        ? norm(b[5], 1.02, 1.20)
+        : norm(b[5], 0.85, 1.02);
+    const hipWidth = gender === "male"
+        ? norm(b[6], 0.85, 1.00)
+        : norm(b[6], 0.98, 1.18);
+    const upperArmLength = norm(b[7], 0.92, 1.08);
+    const upperLegLength = norm(b[8], 0.94, 1.06);
+    const spineLength = norm(b[9], 0.96, 1.04);
 
-    return { scale, skinColor, hairColor, topColor, bottomColor, headScaleY };
+    // Head shape
+    const headScaleX = norm(b[10], 0.90, 1.10);
+    const headScaleY = norm(b[11], 0.90, 1.10);
+    const headScaleZ = norm(b[12], 0.93, 1.07);
+
+    // Face features
+    const eyebrowStyle = b[13] % 6;
+    const eyebrowThickness = norm(b[14], 0.6, 1.4);
+    const eyeSize = norm(b[15], 0.7, 1.3);
+    const noseWidth = norm(b[16], 0.7, 1.3);
+    const mouthWidth = norm(b[17], 0.7, 1.3);
+    const mouthCurve = norm(b[18], -0.3, 0.3);
+
+    return {
+        gender, scale: baseScale, skinColor, hairColor, eyeColor, eyeDarkColor,
+        shoulderWidth, hipWidth, upperArmLength, upperLegLength, spineLength,
+        headScaleX, headScaleY, headScaleZ,
+        eyebrowStyle, eyebrowThickness, eyeSize, noseWidth, mouthWidth, mouthCurve,
+    };
+}
+
+// ─── Face overlay: procedural eyebrows / features ───
+
+function buildFaceOverlay(
+    scene: Scene,
+    parent: TransformNode,
+    traits: InnateTraits,
+): Mesh {
+    const size = 0.6;
+    const plane = MeshBuilder.CreatePlane("faceOverlay", { width: size, height: size }, scene);
+    // Position in front of face — head bone local coords
+    plane.position.y = 0.5;
+    plane.position.z = -0.55;
+    plane.parent = parent;
+
+    const res = 256;
+    const tex = new DynamicTexture("faceTex", { width: res, height: res }, scene, true);
+    tex.hasAlpha = true;
+    const ctx = tex.getContext() as unknown as CanvasRenderingContext2D;
+    ctx.clearRect(0, 0, res, res);
+
+    const cx = res / 2; // center x
+    const cy = res / 2; // center y
+
+    // ── Eyebrows ──
+    const browY = cy - 50 * traits.eyeSize;
+    const browSpread = 28;
+    const browLen = 35 * traits.eyebrowThickness;
+    const browThick = 3 + 4 * traits.eyebrowThickness;
+
+    ctx.strokeStyle = `rgb(${traits.hairColor.r * 200}, ${traits.hairColor.g * 180}, ${traits.hairColor.b * 160})`;
+    ctx.lineWidth = browThick;
+    ctx.lineCap = "round";
+
+    // Different eyebrow styles
+    const style = traits.eyebrowStyle;
+    for (const side of [-1, 1]) {
+        const bx = cx + side * browSpread;
+        ctx.beginPath();
+        if (style === 0) {
+            // Straight
+            ctx.moveTo(bx - side * browLen, browY);
+            ctx.lineTo(bx + side * browLen * 0.3, browY - 2);
+        } else if (style === 1) {
+            // Arched
+            ctx.moveTo(bx - side * browLen, browY + 4);
+            ctx.quadraticCurveTo(bx, browY - 12, bx + side * browLen * 0.3, browY);
+        } else if (style === 2) {
+            // Angled
+            ctx.moveTo(bx - side * browLen, browY + 6);
+            ctx.lineTo(bx, browY - 6);
+            ctx.lineTo(bx + side * browLen * 0.3, browY - 3);
+        } else if (style === 3) {
+            // Rounded
+            ctx.moveTo(bx - side * browLen, browY + 2);
+            ctx.quadraticCurveTo(bx, browY - 8, bx + side * browLen * 0.4, browY + 2);
+        } else if (style === 4) {
+            // Thick straight
+            ctx.lineWidth = browThick * 1.5;
+            ctx.moveTo(bx - side * browLen, browY);
+            ctx.lineTo(bx + side * browLen * 0.4, browY + 1);
+        } else {
+            // S-curve
+            ctx.moveTo(bx - side * browLen, browY + 3);
+            ctx.bezierCurveTo(
+                bx - side * browLen * 0.3, browY - 10,
+                bx + side * browLen * 0.1, browY - 5,
+                bx + side * browLen * 0.4, browY + 1,
+            );
+        }
+        ctx.stroke();
+    }
+
+    // ── Nose hint ──
+    const noseW = 6 * traits.noseWidth;
+    ctx.strokeStyle = `rgba(${traits.skinColor.r * 150}, ${traits.skinColor.g * 120}, ${traits.skinColor.b * 100}, 0.5)`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx - noseW, cy + 8);
+    ctx.quadraticCurveTo(cx, cy + 14, cx + noseW, cy + 8);
+    ctx.stroke();
+
+    // ── Mouth ──
+    const mw = 18 * traits.mouthWidth;
+    const mouthY = cy + 30;
+    ctx.strokeStyle = `rgba(180, 80, 80, 0.6)`;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(cx - mw, mouthY);
+    ctx.quadraticCurveTo(cx, mouthY + 12 * traits.mouthCurve, cx + mw, mouthY);
+    ctx.stroke();
+
+    tex.update();
+
+    const mat = new StandardMaterial("faceOverlayMat", scene);
+    mat.diffuseTexture = tex;
+    mat.useAlphaFromDiffuseTexture = true;
+    mat.emissiveColor = Color3.White();
+    mat.disableLighting = true;
+    mat.backFaceCulling = false;
+    plane.material = mat;
+
+    return plane;
 }
 
 // ─── Avatar rig interface ───
@@ -123,7 +298,16 @@ export function blendWalkAnimation(rig: AvatarRig, isMoving: boolean, dt: number
     rig.idleAnim.setWeightForAllAnimatables(1 - rig.walkWeight);
 }
 
-// ─── Avatar builder (loads HVGirl.glb from Babylon.js CDN) ───
+// ─── Default clothing colors (neutral — NOT address-derived) ───
+
+const DEFAULT_CLOTHING: Record<string, [number, number, number]> = {
+    "T-shirt": [0.35, 0.35, 0.40],  // neutral grey
+    "short":   [0.25, 0.25, 0.28],  // dark grey
+    "belt":    [0.30, 0.28, 0.22],  // neutral leather
+    "brown":   [0.28, 0.22, 0.16],  // neutral shoes
+};
+
+// ─── Main avatar builder ───
 
 export async function buildAvatar(
     scene: Scene,
@@ -140,13 +324,52 @@ export async function buildAvatar(
     const root = result.meshes[0] as unknown as TransformNode;
     const traits = addressToTraits(address);
 
-    // Scale down — varied by address (canonical ~0.1, now 0.08–0.12)
+    // Scale — address-derived height
     root.scaling.setAll(traits.scale);
 
-    // GLB models use rotationQuaternion by default — clear it so Euler .rotation.y works
+    // GLB uses rotationQuaternion — clear for Euler
     root.rotationQuaternion = null;
 
-    // Find a head-ish mesh for camera targeting
+    // ── Apply bone scaling for body proportions ──
+    const boneNames: Record<string, (t: TransformNode) => void> = {
+        "mixamorig:Spine2": (node) => {
+            node.scaling.x = traits.shoulderWidth;
+        },
+        "mixamorig:Hips": (node) => {
+            node.scaling.x = traits.hipWidth;
+        },
+        "mixamorig:LeftArm": (node) => {
+            node.scaling.y = traits.upperArmLength;
+        },
+        "mixamorig:RightArm": (node) => {
+            node.scaling.y = traits.upperArmLength;
+        },
+        "mixamorig:LeftUpLeg": (node) => {
+            node.scaling.y = traits.upperLegLength;
+        },
+        "mixamorig:RightUpLeg": (node) => {
+            node.scaling.y = traits.upperLegLength;
+        },
+        "mixamorig:Spine1": (node) => {
+            node.scaling.y = traits.spineLength;
+        },
+        "mixamorig:Head": (node) => {
+            node.scaling.x = traits.headScaleX;
+            node.scaling.y = traits.headScaleY;
+            node.scaling.z = traits.headScaleZ;
+        },
+    };
+
+    let headBone: TransformNode | null = null;
+
+    const allNodes = root.getChildTransformNodes(false);
+    for (const node of allNodes) {
+        const fn = boneNames[node.name];
+        if (fn) fn(node);
+        if (node.name === "mixamorig:Head") headBone = node;
+    }
+
+    // ── Find head mesh for camera targeting ──
     let headMesh: Mesh | null = null;
     for (const m of result.meshes) {
         const name = m.name.toLowerCase();
@@ -159,12 +382,7 @@ export async function buildAvatar(
         headMesh = result.meshes[1] as Mesh;
     }
 
-    // Apply head scale variation
-    if (headMesh) {
-        headMesh.scaling.y = traits.headScaleY;
-    }
-
-    // Set up shadows
+    // ── Shadows ──
     if (shadow) {
         result.meshes.forEach((m) => {
             shadow.addShadowCaster(m as Mesh);
@@ -172,37 +390,92 @@ export async function buildAvatar(
         });
     }
 
-    // Ensure meshes are opaque & apply address-deterministic colors
-    result.meshes.forEach((m) => {
+    // ── Apply innate material colors ──
+    // Material name → color mapping (innate traits only)
+    const innateColors: Record<string, Color3> = {
+        "skin": traits.skinColor,
+        "hair": traits.hairColor,
+        "iris": traits.eyeColor,
+        "iris dark": traits.eyeDarkColor,
+    };
+
+    for (const mat of scene.materials) {
+        const matName = mat.name;
+
+        // Innate traits — skin, hair, eyes
+        if (innateColors[matName]) {
+            const cloned = mat.clone(matName + "_" + address.slice(2, 8));
+            if (!cloned) continue;
+            if (cloned instanceof PBRMaterial) {
+                cloned.albedoColor = innateColors[matName];
+            } else if (cloned instanceof StandardMaterial) {
+                cloned.diffuseColor = innateColors[matName];
+            }
+            // Apply cloned material to all meshes using the original
+            for (const m of result.meshes) {
+                if (m.material === mat) m.material = cloned;
+            }
+        }
+
+        // Clothing — default neutral (NOT address-derived)
+        if (DEFAULT_CLOTHING[matName]) {
+            const [cr, cg, cb] = DEFAULT_CLOTHING[matName];
+            const cloned = mat.clone(matName + "_" + address.slice(2, 8));
+            if (!cloned) continue;
+            if (cloned instanceof PBRMaterial) {
+                cloned.albedoColor = new Color3(cr, cg, cb);
+            } else if (cloned instanceof StandardMaterial) {
+                cloned.diffuseColor = new Color3(cr, cg, cb);
+            }
+            for (const m of result.meshes) {
+                if (m.material === mat) m.material = cloned;
+            }
+        }
+    }
+
+    // Also handle MultiMaterial sub-materials
+    for (const m of result.meshes) {
         m.hasVertexAlpha = false;
+        const multiMat = m.material;
+        if (multiMat && "subMaterials" in multiMat) {
+            const subs = (multiMat as { subMaterials: (PBRMaterial | StandardMaterial | null)[] }).subMaterials;
+            for (let i = 0; i < subs.length; i++) {
+                const sub = subs[i];
+                if (!sub) continue;
+                const subName = sub.name;
 
-        // Clone material so each avatar instance has its own
-        if (m.material) {
-            const cloned = m.material.clone(m.material.name + "_" + address.slice(2, 8));
-            if (cloned) {
-                m.material = cloned;
-                const name = m.name.toLowerCase();
-                const isSkin = name.includes("body") || name.includes("skin") || name.includes("head") || name.includes("face") || name.includes("arm") || name.includes("hand");
-                const isHair = name.includes("hair") || name.includes("bangs") || name.includes("ponytail");
-                const isBottom = name.includes("bottom") || name.includes("pant") || name.includes("leg") || name.includes("shoe") || name.includes("foot");
+                if (innateColors[subName]) {
+                    const cloned = sub.clone(subName + "_" + address.slice(2, 8));
+                    if (!cloned) continue;
+                    if (cloned instanceof PBRMaterial) {
+                        cloned.albedoColor = innateColors[subName];
+                    } else if (cloned instanceof StandardMaterial) {
+                        cloned.diffuseColor = innateColors[subName];
+                    }
+                    subs[i] = cloned as PBRMaterial | StandardMaterial;
+                }
 
-                let tintColor: Color3;
-                if (isSkin) tintColor = traits.skinColor;
-                else if (isHair) tintColor = traits.hairColor;
-                else if (isBottom) tintColor = traits.bottomColor;
-                else tintColor = traits.topColor; // everything else = top/clothing
-
-                if (cloned instanceof PBRMaterial) {
-                    cloned.albedoColor = tintColor;
-                } else if (cloned instanceof StandardMaterial) {
-                    cloned.diffuseColor = tintColor;
+                if (DEFAULT_CLOTHING[subName]) {
+                    const [cr, cg, cb] = DEFAULT_CLOTHING[subName];
+                    const cloned = sub.clone(subName + "_" + address.slice(2, 8));
+                    if (!cloned) continue;
+                    if (cloned instanceof PBRMaterial) {
+                        cloned.albedoColor = new Color3(cr, cg, cb);
+                    } else if (cloned instanceof StandardMaterial) {
+                        cloned.diffuseColor = new Color3(cr, cg, cb);
+                    }
+                    subs[i] = cloned as PBRMaterial | StandardMaterial;
                 }
             }
         }
-    });
+    }
 
-    // Animation groups in HVGirl.glb:
-    //   [0] "Idle", [1] "Samba", [2] "Walking", [3] "WalkingBack"
+    // ── Face overlay (eyebrows, nose hint, mouth) ──
+    if (headBone) {
+        buildFaceOverlay(scene, headBone, traits);
+    }
+
+    // ── Animations ──
     let idleAnim: AnimationGroup | null = null;
     let walkAnim: AnimationGroup | null = null;
     let runAnim: AnimationGroup | null = null;
@@ -211,10 +484,9 @@ export async function buildAvatar(
         const name = ag.name;
         if (name === "Idle") idleAnim = ag;
         else if (name === "Walking") walkAnim = ag;
-        else if (name === "Samba") runAnim = ag; // use Samba as "run" variant
+        else if (name === "Samba") runAnim = ag;
     }
 
-    // Stop all animations first, then start with blending
     result.animationGroups.forEach((ag) => ag.stop());
 
     if (idleAnim) {
@@ -230,7 +502,6 @@ export async function buildAvatar(
         runAnim.setWeightForAllAnimatables(0);
     }
 
-    // headBaseY scales with avatar size (1.7 at scale 0.1)
     const headBaseY = 1.7 * (traits.scale / 0.1);
 
     return {
@@ -251,7 +522,6 @@ export function buildChatBubble(
     parent: TransformNode,
     text: string,
 ): Mesh {
-    // Measure text to size the bubble
     const charWidth = 14;
     const maxChars = 30;
     const displayText = text.length > maxChars ? text.slice(0, maxChars - 1) + "…" : text;
@@ -269,13 +539,11 @@ export function buildChatBubble(
     const ctx = tex.getContext() as unknown as CanvasRenderingContext2D;
     ctx.clearRect(0, 0, 512, 64);
 
-    // Background pill
     ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
     ctx.beginPath();
     ctx.roundRect(4, 4, 504, 56, 28);
     ctx.fill();
 
-    // Text
     ctx.font = "bold 26px sans-serif";
     ctx.fillStyle = "#ffffff";
     ctx.textAlign = "center";
@@ -313,13 +581,11 @@ export function buildAddressLabel(
     const labelCtx = tex.getContext() as unknown as CanvasRenderingContext2D;
     labelCtx.clearRect(0, 0, 512, 64);
 
-    // Background pill
     labelCtx.fillStyle = "rgba(0, 0, 0, 0.6)";
     labelCtx.beginPath();
     labelCtx.roundRect(8, 8, 496, 48, 24);
     labelCtx.fill();
 
-    // Text — red for self, white for others
     labelCtx.font = "bold 28px monospace";
     labelCtx.fillStyle = isSelf ? "#ff4444" : "#ffffff";
     labelCtx.textAlign = "center";
